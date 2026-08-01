@@ -14,6 +14,7 @@ dependencies = [
     "pyyaml>=6.0",
     "jinja2>=3.1",
     "sqlalchemy>=2.0",
+    "alembic>=1.13",
     "pillow>=10.2",
     "python-bidi>=0.4",
     "arabic-reshaper>=3.0",
@@ -45,3 +46,7 @@ pythonpath = ["."]
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Alembic-generated revision scripts follow Alembic's own template/style,
+# not this project's — lint the handwritten alembic/env.py, but not
+# machine-generated migrations.
+extend-exclude = ["alembic/versions"]

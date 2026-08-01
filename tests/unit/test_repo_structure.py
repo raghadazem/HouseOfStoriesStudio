@@ -14,6 +14,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 REQUIRED_DIRS = [
     "app",
     "app/core",
+    "app/core/db",
+    "app/core/models",
     "app/core/templates",
     "app/gui",
     "app/cli",
@@ -27,6 +29,8 @@ REQUIRED_DIRS = [
     "docs",
     "tests",
     "data",
+    "alembic",
+    "alembic/versions",
 ]
 
 REQUIRED_FILES = [
@@ -36,6 +40,12 @@ REQUIRED_FILES = [
     "app/__init__.py",
     "app/config.py",
     "app/logging_setup.py",
+    "alembic.ini",
+    "alembic/env.py",
+    "app/core/db/base.py",
+    "app/core/db/engine.py",
+    "app/core/db/enums.py",
+    "app/core/db/seed.py",
 ]
 
 REQUIRED_DOCS = [
@@ -47,6 +57,11 @@ REQUIRED_DOCS = [
     "docs/05_TECHNICAL_ARCHITECTURE.md",
     "docs/06_CLAUDE_FIRST_TASK.md",
     "docs/07_DEVELOPMENT_PLAN.md",
+    "docs/08_IMPLEMENTATION_STATUS.md",
+    "docs/09_DOMAIN_MODEL.md",
+    "docs/10_DATABASE_SCHEMA.md",
+    "docs/11_STORAGE_RULES.md",
+    "docs/12_MILESTONE_2_STATUS.md",
 ]
 
 
