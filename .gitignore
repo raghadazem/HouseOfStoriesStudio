@@ -1,0 +1,49 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Runtime data (per-machine, not version-controlled) ---
+data/*
+!data/README.md
+!data/logs/
+data/logs/*
+!data/logs/README.md
+
+# --- Local-only configuration / secrets ---
+*.local.yaml
+*.local.yml
+.env
+
+# --- Large creative binaries (see docs/07_DEVELOPMENT_PLAN.md §25) ---
+# Text/metadata under production/ (*.md, *.yaml, *.yml, *.json) is
+# tracked; imported media is not, to keep the repository small and to
+# avoid ever accidentally committing original reference photographs.
+production/**/*.png
+production/**/*.jpg
+production/**/*.jpeg
+production/**/*.gif
+production/**/*.webp
+production/**/*.mp4
+production/**/*.mov
+production/**/*.mkv
+production/**/*.wav
+production/**/*.mp3
+production/**/*.flac
+production/**/*.psd
+production/**/*.ai
+
+# --- OS / editor cruft ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

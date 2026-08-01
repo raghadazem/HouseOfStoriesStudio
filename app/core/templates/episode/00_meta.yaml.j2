@@ -1,0 +1,40 @@
+# Episode metadata — machine- and human-editable.
+# Rendered from app/core/templates/episode/00_meta.yaml.j2 by the
+# (Milestone 3) episode_service. Do not hand-edit the schema shape;
+# edit values only.
+
+episode:
+  id: "{{ episode.id }}"                      # e.g. "ep001"
+  number: {{ episode.number }}
+  season: {{ episode.season | default(1) }}
+  title_ar: "{{ episode.title_ar }}"
+  title_en: "{{ episode.title_en }}"
+  lesson: "{{ episode.lesson }}"               # the one positive lesson this episode teaches
+  logline_ar: "{{ episode.logline_ar | default('') }}"
+  dialogue_language: "simple_white_arabic"     # العربية البيضاء المبسطة — see docs/07 §? and founder approval notes
+  runtime_target_minutes: "{{ episode.runtime_target_minutes | default('8-10') }}"
+  includes_song: {{ episode.includes_song | default(false) | lower }}
+
+status:
+  pipeline_stage: "{{ episode.pipeline_stage | default('idea') }}"
+  # idea -> lesson -> outline -> script -> storyboard -> image_prompts ->
+  # video_prompts -> voice -> song -> editing -> thumbnail -> seo ->
+  # ready_to_publish -> published
+  created_at: "{{ episode.created_at }}"
+  published_at: "{{ episode.published_at | default('') }}"
+  youtube_url: "{{ episode.youtube_url | default('') }}"
+
+characters_featured:
+{% for character_id in episode.characters_featured | default(['melissa', 'bilsan']) %}
+  - "{{ character_id }}"
+{% endfor %}
+
+shorts:
+  # Each long episode produces exactly three linked Shorts (approved
+  # production spec). Populated once the long episode is edited.
+{% for short in episode.shorts | default([{}, {}, {}]) %}
+  - id: "{{ short.id | default('') }}"
+    title_ar: "{{ short.title_ar | default('') }}"
+    source_timestamp_range: "{{ short.source_timestamp_range | default('') }}"
+    status: "{{ short.status | default('planned') }}"
+{% endfor %}

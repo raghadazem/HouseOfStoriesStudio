@@ -1,0 +1,49 @@
+# Character Lock record — approved Character Consistency workflow.
+# Rendered from app/core/templates/character/character_meta.yaml.j2 by
+# the (Milestone 3) character_service.
+#
+# PRIVACY: original personal reference photographs must NEVER be placed
+# under production/characters/**. Only approved, original animated
+# character artwork belongs here. See docs/07_DEVELOPMENT_PLAN.md §23
+# and the founder's privacy rule in the Milestone-approval message.
+
+character:
+  id: "{{ character.id }}"                 # e.g. "melissa"
+  name_ar: "{{ character.name_ar }}"
+  name_en: "{{ character.name_en }}"
+  age: {{ character.age | default('null') }}
+  role: "{{ character.role | default('') }}"
+  traits:
+{% for trait in character.traits | default([]) %}
+    - "{{ trait }}"
+{% endfor %}
+
+visual_specification:
+  # PLACEHOLDER until approved animated model-sheet art exists.
+  # Do not invent details beyond docs/02_CHARACTER_BIBLE.md.
+  summary: "{{ character.visual_summary | default('PLACEHOLDER — pending approved visual reference') }}"
+  color_palette:
+{% for color in character.color_palette | default([]) %}
+    - "{{ color }}"
+{% endfor %}
+  allowed_accessories:
+{% for accessory in character.allowed_accessories | default([]) %}
+    - "{{ accessory }}"
+{% endfor %}
+  relative_height: "{{ character.relative_height | default('PLACEHOLDER') }}"
+
+prompt_blocks:
+  master_prompt: "{{ character.master_prompt | default('PLACEHOLDER — pending approval') }}"
+  negative_prompt: "{{ character.negative_prompt | default('PLACEHOLDER — pending approval') }}"
+
+reference:
+  approved_reference_assets:
+{% for asset in character.approved_reference_assets | default([]) %}
+    - "{{ asset }}"
+{% endfor %}
+  reference_version: "{{ character.reference_version | default('v00') }}"
+  outfit_version: "{{ character.outfit_version | default('v00') }}"
+
+approval:
+  status: "{{ character.approval_status | default('draft') }}"   # draft | in_review | approved_canon | archived
+  review_notes: "{{ character.review_notes | default('') }}"
