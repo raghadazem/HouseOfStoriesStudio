@@ -41,15 +41,30 @@ class Character(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     age: Mapped[int | None] = mapped_column(nullable=True)
     role: Mapped[str | None] = mapped_column(String(128), nullable=True)
     traits: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # The single "current" version, per the founder's "at most one active
+    # version per Character" rule. Nullable/SET NULL (not a required FK)
+    # because a brand-new character has no approved version yet, and
+    # because this column is set *after* both rows exist (a version must
+    # be created and approved before it can become active).
+    active_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("character_versions.id", ondelete="SET NULL"), nullable=True
+    )
 
     versions: Mapped[list[CharacterVersion]] = relationship(
         back_populates="character",
         cascade="all, delete-orphan",
         order_by="CharacterVersion.version_number",
+        foreign_keys="CharacterVersion.character_id",
     )
     references: Mapped[list[CharacterReference]] = relationship(
         back_populates="character",
         cascade="all, delete-orphan",
+    )
+    active_version: Mapped[CharacterVersion | None] = relationship(
+        foreign_keys=[active_version_id],
+        post_update=True,
     )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
@@ -97,7 +112,9 @@ class CharacterVersion(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     decided_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     review_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    character: Mapped[Character] = relationship(back_populates="versions")
+    character: Mapped[Character] = relationship(
+        back_populates="versions", foreign_keys=[character_id]
+    )
     references: Mapped[list[CharacterReference]] = relationship(
         back_populates="character_version"
     )

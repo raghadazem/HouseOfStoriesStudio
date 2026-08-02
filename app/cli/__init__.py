@@ -1,5 +1,6 @@
-"""Optional command-line entry points, reusing ``app.core`` services.
+"""Developer command-line entry points, reusing ``app.core`` services.
 
-Placeholder for Milestone 3+; kept as a package now so the core/GUI
-separation is visible from the start of the repository.
+See ``app/cli/main.py`` for the actual commands
+(``python -m app.cli.main --help``). For development and operational
+testing only — not a full user-facing CLI.
 """

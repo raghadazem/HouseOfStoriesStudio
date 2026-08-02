@@ -11,7 +11,14 @@ from app.core.db.base import Base
 from app.core.models.approval import ApprovalRecord
 from app.core.models.asset import Asset
 from app.core.models.character import Character, CharacterReference, CharacterVersion
-from app.core.models.episode import Episode, Scene, Short, episode_characters, scene_characters
+from app.core.models.episode import (
+    Episode,
+    Scene,
+    Short,
+    episode_characters,
+    scene_characters,
+    short_scenes,
+)
 from app.core.models.license import LicenseRecord
 from app.core.models.production_task import ProductionTask
 from app.core.models.prompt import PromptTemplate
@@ -31,4 +38,5 @@ __all__ = [
     "Short",
     "episode_characters",
     "scene_characters",
+    "short_scenes",
 ]

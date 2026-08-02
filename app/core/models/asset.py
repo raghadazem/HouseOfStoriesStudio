@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import re
 import uuid
-from pathlib import PurePath
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Enum, ForeignKey, String, Text, UniqueConstraint
@@ -19,29 +18,26 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.core.db.enums import ApprovalStatus, AssetType
+from app.core.models._path_validation import validate_relative_path
 
 if TYPE_CHECKING:
     from app.core.models.character import CharacterVersion
-    from app.core.models.episode import Episode
+    from app.core.models.episode import Episode, Scene, Short
     from app.core.models.prompt import PromptTemplate
 
-_WINDOWS_ABS_RE = re.compile(r"^[a-zA-Z]:[\\/]")
 _CHECKSUM_RE = re.compile(r"^[0-9a-f]{64}$")
 
-
-def _looks_absolute(value: str) -> bool:
-    """Detect an absolute path under POSIX *or* Windows conventions.
-
-    Uses simple prefix checks (rather than relying solely on
-    ``pathlib.PurePath.is_absolute()``) because the app must run on
-    Windows, but its tests may run on Linux/macOS, where
-    ``PurePath("C:\\\\foo").is_absolute()`` is ``False``.
-    """
-    if value.startswith(("/", "\\")):
-        return True
-    if _WINDOWS_ABS_RE.match(value):
-        return True
-    return PurePath(value).is_absolute()
+# Free-text convention, not an enum: marks which asset is THE current
+# deliverable of its kind for an episode/short, e.g. "final_video",
+# "final_thumbnail", "final_voice", "final_music". Anything without a
+# "final_" role is a draft/candidate/work-in-progress asset. Kept a
+# plain string (not an enum) since new roles may be needed without a
+# schema change, and only ProductionChecklistService/ExportPackageService
+# interpret the convention.
+ROLE_FINAL_VIDEO = "final_video"
+ROLE_FINAL_THUMBNAIL = "final_thumbnail"
+ROLE_FINAL_VOICE = "final_voice"
+ROLE_FINAL_MUSIC = "final_music"
 
 
 class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -72,6 +68,11 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     license_status: Mapped[str | None] = mapped_column(String(128), nullable=True)
     commercial_use_status: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
+    # Which "slot" this asset fills, e.g. "final_video" — see the
+    # ROLE_* constants above. Nullable: most imported candidates/drafts
+    # have no special role at all.
+    role: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     prompt_used_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("prompt_templates.id", ondelete="SET NULL"), nullable=True
     )
@@ -80,6 +81,12 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     episode_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("episodes.id", ondelete="SET NULL"), nullable=True
+    )
+    scene_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("scenes.id", ondelete="SET NULL"), nullable=True
+    )
+    short_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("shorts.id", ondelete="SET NULL"), nullable=True
     )
 
     approval_status: Mapped[ApprovalStatus] = mapped_column(
@@ -94,6 +101,8 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     character_version: Mapped[CharacterVersion | None] = relationship()
     episode: Mapped[Episode | None] = relationship()
+    scene: Mapped[Scene | None] = relationship()
+    short: Mapped[Short | None] = relationship(foreign_keys=[short_id])
 
     @validates("relative_path")
     def validate_relative_path(self, key: str, value: str) -> str:
@@ -105,19 +114,7 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         other environment) — an absolute path baked into the database
         would silently break the moment the project folder moved.
         """
-        if not value or not value.strip():
-            raise ValueError("Asset.relative_path must not be empty.")
-        if _looks_absolute(value):
-            raise ValueError(
-                f"Asset.relative_path must be relative to production_dir, "
-                f"got an absolute path: {value!r}"
-            )
-        normalized = value.replace("\\", "/")
-        if ".." in PurePath(normalized).parts:
-            raise ValueError(
-                f"Asset.relative_path must not contain '..' path traversal: {value!r}"
-            )
-        return normalized
+        return validate_relative_path("Asset.relative_path", value)
 
     @validates("checksum")
     def validate_checksum(self, key: str, value: str) -> str:

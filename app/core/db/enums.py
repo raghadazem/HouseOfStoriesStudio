@@ -96,3 +96,25 @@ class ApprovalDecision(str, enum.Enum):
     APPROVED = "approved"
     REJECTED = "rejected"
     NEEDS_CHANGES = "needs_changes"
+
+
+class PromptCategory(str, enum.Enum):
+    """Which stage of production a prompt belongs to.
+
+    Distinct from :class:`PromptType` (which *generator* a prompt targets):
+    a prompt's category is about where it fits in the pipeline
+    (``docs/04_PRODUCTION_PIPELINE.md``), independent of which tool will
+    consume it.
+    """
+
+    STORY = "story"
+    STORYBOARD = "storyboard"
+    CHARACTER = "character"
+    BACKGROUND = "background"
+    IMAGE = "image"
+    VIDEO = "video"
+    VOICE = "voice"
+    SONG = "song"
+    THUMBNAIL = "thumbnail"
+    SEO = "seo"
+    PUBLISHING = "publishing"

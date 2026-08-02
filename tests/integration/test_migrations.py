@@ -32,6 +32,7 @@ EXPECTED_TABLES = {
     "prompt_templates",
     "scene_characters",
     "scenes",
+    "short_scenes",
     "shorts",
 }
 

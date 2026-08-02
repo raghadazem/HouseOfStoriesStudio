@@ -16,7 +16,7 @@ from sqlalchemy import Boolean, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.core.db.enums import PromptType
+from app.core.db.enums import PromptCategory, PromptType
 
 if TYPE_CHECKING:
     from app.core.models.character import Character
@@ -24,7 +24,12 @@ if TYPE_CHECKING:
 
 
 class PromptTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """A named, versioned prompt for an image/video/voice/music/text generator."""
+    """A named, versioned prompt for an image/video/voice/music/text generator.
+
+    May be fully global (no character/episode/scene link at all) — a
+    reusable style-lock or category-level block usable anywhere — or
+    scoped to a specific character/episode/scene for one-off prompts.
+    """
 
     __tablename__ = "prompt_templates"
     __table_args__ = (
@@ -33,11 +38,17 @@ class PromptTemplate(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     name: Mapped[str] = mapped_column(String(128), nullable=False)
     version: Mapped[str] = mapped_column(String(16), default="v01", nullable=False)
+    category: Mapped[PromptCategory] = mapped_column(
+        Enum(PromptCategory, native_enum=False, length=32),
+        nullable=False,
+        server_default=PromptCategory.STORY.name,
+    )
     prompt_type: Mapped[PromptType] = mapped_column(
         Enum(PromptType, native_enum=False, length=32), nullable=False
     )
     text_en: Mapped[str] = mapped_column(Text, nullable=False)
     is_reusable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    is_archived: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     target_tool: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
     character_id: Mapped[uuid.UUID | None] = mapped_column(

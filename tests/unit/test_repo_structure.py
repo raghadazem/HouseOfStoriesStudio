@@ -1,7 +1,7 @@
-"""Verifies the approved Milestone 1 repository foundation is present.
+"""Verifies the approved repository foundation (Milestones 1-3) is present.
 
-These tests intentionally check structure, not domain behavior (there
-is no domain behavior yet) — they exist so an accidental deletion or
+These tests check structure, not domain behavior (that's covered
+service-by-service elsewhere) — they exist so an accidental deletion or
 rename of a required folder/doc is caught immediately.
 """
 
@@ -16,6 +16,7 @@ REQUIRED_DIRS = [
     "app/core",
     "app/core/db",
     "app/core/models",
+    "app/core/services",
     "app/core/templates",
     "app/gui",
     "app/cli",
@@ -46,6 +47,15 @@ REQUIRED_FILES = [
     "app/core/db/engine.py",
     "app/core/db/enums.py",
     "app/core/db/seed.py",
+    "app/core/naming.py",
+    "app/core/services/exceptions.py",
+    "app/core/services/unit_of_work.py",
+    "app/core/services/episode_service.py",
+    "app/core/services/asset_import_service.py",
+    "app/core/services/storage_service.py",
+    "app/core/services/production_checklist_service.py",
+    "app/core/services/export_package_service.py",
+    "app/cli/main.py",
 ]
 
 REQUIRED_DOCS = [
@@ -62,6 +72,11 @@ REQUIRED_DOCS = [
     "docs/10_DATABASE_SCHEMA.md",
     "docs/11_STORAGE_RULES.md",
     "docs/12_MILESTONE_2_STATUS.md",
+    "docs/13_CORE_SERVICES.md",
+    "docs/14_ASSET_IMPORT_WORKFLOW.md",
+    "docs/15_APPROVAL_AND_LICENSE_WORKFLOW.md",
+    "docs/16_EXPORT_PACKAGE.md",
+    "docs/17_MILESTONE_3_STATUS.md",
 ]
 
 

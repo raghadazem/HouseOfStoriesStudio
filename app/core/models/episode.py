@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     Enum,
@@ -47,6 +48,17 @@ scene_characters = Table(
     Column("character_id", ForeignKey("characters.id", ondelete="CASCADE"), primary_key=True),
 )
 
+# Which Scenes a Short was cut from. A Short's source scenes must all
+# belong to the same Episode the Short itself belongs to — enforced in
+# ShortService, not at the schema level (SQLite can't express a
+# cross-table "same parent" constraint declaratively).
+short_scenes = Table(
+    "short_scenes",
+    Base.metadata,
+    Column("short_id", ForeignKey("shorts.id", ondelete="CASCADE"), primary_key=True),
+    Column("scene_id", ForeignKey("scenes.id", ondelete="CASCADE"), primary_key=True),
+)
+
 
 class Episode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """One long-form episode and its position in the production pipeline."""
@@ -76,6 +88,15 @@ class Episode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     published_at: Mapped[datetime | None] = mapped_column(nullable=True)
     youtube_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
+    # Export/SEO metadata. Kept as structured columns (rather than only
+    # existing in the hand-edited 07_seo.md file) so ExportPackageService
+    # can generate export files deterministically without parsing
+    # Markdown.
+    description_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    description_en: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hashtags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    credits_text: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scenes: Mapped[list[Scene]] = relationship(
         back_populates="episode",
@@ -108,9 +129,16 @@ class Scene(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     location: Mapped[str | None] = mapped_column(String(128), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     dialogue_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Founder-estimated (not auto-derived) length of this scene, used by
+    # SceneService.calculate_total_scene_duration. Nullable: most scenes
+    # won't have a duration estimate until later in production.
+    estimated_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     episode: Mapped[Episode] = relationship(back_populates="scenes")
     characters_present: Mapped[list[Character]] = relationship(secondary=scene_characters)
+    source_for_shorts: Mapped[list[Short]] = relationship(
+        secondary=short_scenes, back_populates="source_scenes"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"<Scene episode={self.episode_id} #{self.order_index}>"
@@ -127,8 +155,12 @@ class Short(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     episode_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False
     )
-    short_index: Mapped[int] = mapped_column(Integer, nullable=False)  # 1, 2, or 3
-    title_ar: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    short_index: Mapped[int] = mapped_column(Integer, nullable=False)  # 1, 2, 3, ...
+    title_ar: Mapped[str | None] = mapped_column(String(256), nullable=True)  # working title (Arabic)
+    working_title_en: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    hook_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    caption_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    hashtags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     source_timestamp_range: Mapped[str | None] = mapped_column(String(64), nullable=True)
     status: Mapped[ShortStatus] = mapped_column(
         Enum(ShortStatus, native_enum=False, length=32),
@@ -140,7 +172,10 @@ class Short(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     episode: Mapped[Episode] = relationship(back_populates="shorts")
-    export_asset: Mapped[Asset | None] = relationship()
+    export_asset: Mapped[Asset | None] = relationship(foreign_keys=[export_asset_id])
+    source_scenes: Mapped[list[Scene]] = relationship(
+        secondary=short_scenes, back_populates="source_for_shorts", order_by="Scene.order_index"
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"<Short episode={self.episode_id} #{self.short_index}>"

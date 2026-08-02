@@ -20,6 +20,7 @@ _ENV_PROJECT_ROOT = "HOS_PROJECT_ROOT"
 _ENV_DATA_DIR = "HOS_DATA_DIR"
 _ENV_PRODUCTION_DIR = "HOS_PRODUCTION_DIR"
 _ENV_LOG_LEVEL = "HOS_LOG_LEVEL"
+_ENV_RESTRICTED_IMPORT_DIRS = "HOS_RESTRICTED_IMPORT_DIRS"
 
 DEFAULT_LOG_LEVEL = "INFO"
 _VALID_LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
@@ -52,6 +53,11 @@ class AppConfig:
     db_path: Path
     log_dir: Path
     log_level: str = DEFAULT_LOG_LEVEL
+    # Directories AssetImportService must always refuse to import from —
+    # e.g. wherever the founder keeps original personal reference
+    # photographs outside this repository. Never hardcoded: configured
+    # per-machine via HOS_RESTRICTED_IMPORT_DIRS.
+    restricted_import_dirs: tuple[Path, ...] = ()
 
     def ensure_runtime_dirs(self) -> None:
         """Create the runtime directories (``data/``, ``data/logs/``).
@@ -81,6 +87,12 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
             content lives. Defaults to ``<project_root>/production``.
         ``HOS_LOG_LEVEL``: Overrides the default logging level, e.g.
             ``"DEBUG"``.
+        ``HOS_RESTRICTED_IMPORT_DIRS``: A list of directories
+            ``AssetImportService`` must always refuse to import from
+            (e.g. a private folder of original reference photographs),
+            separated by ``os.pathsep`` (``;`` on Windows, ``:`` on
+            POSIX). Empty/unset means no restricted directories are
+            configured.
 
     Raises:
         ValueError: If ``HOS_LOG_LEVEL`` is set to a value that is not
@@ -111,6 +123,11 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
             f"Expected one of: {', '.join(_VALID_LOG_LEVELS)}."
         )
 
+    restricted_raw = source.get(_ENV_RESTRICTED_IMPORT_DIRS, "")
+    restricted_import_dirs = tuple(
+        Path(part).resolve() for part in restricted_raw.split(os.pathsep) if part.strip()
+    )
+
     return AppConfig(
         project_root=project_root,
         production_dir=production_dir,
@@ -118,6 +135,7 @@ def load_config(env: Mapping[str, str] | None = None) -> AppConfig:
         db_path=data_dir / "studio.db",
         log_dir=data_dir / "logs",
         log_level=log_level,
+        restricted_import_dirs=restricted_import_dirs,
     )
 
 

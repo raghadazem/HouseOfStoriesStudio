@@ -20,6 +20,9 @@ dependencies = [
     "arabic-reshaper>=3.0",
 ]
 
+[project.scripts]
+hos-cli = "app.cli.main:main"
+
 [project.optional-dependencies]
 # Only needed starting Milestone 4 (GUI). Kept separate so Milestones
 # 1-3 never require installing the large PySide6 package.
