@@ -135,3 +135,82 @@ def test_export_episode_final_blocked_without_preview(cli_env: dict[str, str]) -
     result = _run("export-episode", "ep001_lost_little_turtle", env=cli_env)
     assert result.returncode == 1
     assert "Refusing final export" in result.stdout + result.stderr
+
+
+# --- Milestone 3.5: AI workflow commands -------------------------------
+
+
+def test_list_ai_workflows(cli_env: dict[str, str]) -> None:
+    result = _run("list-ai-workflows", env=cli_env)
+    assert result.returncode == 0
+    assert set(result.stdout.split()) == {
+        "character_reference_image", "scene_image", "thumbnail", "voice_line",
+    }
+
+
+def test_list_ai_providers(cli_env: dict[str, str]) -> None:
+    result = _run("list-ai-providers", env=cli_env)
+    assert result.returncode == 0
+    assert "mock_provider" in result.stdout
+    assert "configured=True" in result.stdout
+
+
+def test_list_ai_providers_filtered_by_modality(cli_env: dict[str, str]) -> None:
+    result = _run("list-ai-providers", "--modality", "image", env=cli_env)
+    assert result.returncode == 0
+    assert "mock_provider" in result.stdout
+
+
+def test_run_ai_workflow_thumbnail_and_review_queue(cli_env: dict[str, str]) -> None:
+    """Full stack, real subprocess: orchestrator -> MockProvider -> AssetImportService -> review queue."""
+    _run("init-db", env=cli_env)
+    _run("seed-demo", env=cli_env)
+
+    result = _run("show-episode", "ep001_lost_little_turtle", env=cli_env)
+    id_line = next(line for line in result.stdout.splitlines() if line.strip().startswith("id:"))
+    episode_id = id_line.split()[-1]
+
+    # Create a global, reusable prompt template to generate against.
+    import_script = (
+        "from app.core.db.engine import create_db_engine, create_session_factory;"
+        "from app.core.db.enums import PromptCategory, PromptType;"
+        "from app.core.services.prompt_template_service import PromptTemplateService;"
+        "engine = create_db_engine(); factory = create_session_factory(engine);"
+        "session = factory();"
+        "t = PromptTemplateService().create_prompt_template(session, name='thumb', "
+        "category=PromptCategory.THUMBNAIL, prompt_type=PromptType.IMAGE, "
+        "text_en='A bright thumbnail.');"
+        "session.commit(); print(t.id)"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", import_script],
+        cwd=REPO_ROOT, env=cli_env, capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    template_id = result.stdout.strip().splitlines()[-1]
+
+    result = _run(
+        "run-ai-workflow", "thumbnail",
+        "--prompt-template-id", template_id,
+        "--episode-id", episode_id,
+        env=cli_env,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Generated asset" in result.stdout
+    assert "mock_provider" in result.stdout
+
+    result = _run("list-review-queue", "--source-tool", "mock_provider", env=cli_env)
+    assert result.returncode == 0
+    assert "thumbnail" in result.stdout
+
+
+def test_run_ai_workflow_unknown_workflow_reports_clean_error(cli_env: dict[str, str]) -> None:
+    _run("init-db", env=cli_env)
+    result = _run(
+        "run-ai-workflow", "not_a_real_workflow",
+        "--prompt-template-id", "00000000-0000-0000-0000-000000000000",
+        env=cli_env,
+    )
+    assert result.returncode == 1
+    assert "Unknown workflow" in result.stdout + result.stderr
+    assert "Traceback" not in result.stdout

@@ -7,19 +7,21 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
-from app.core.db.enums import ApprovalDecision, AssetType
-from app.core.models import Asset
+from app.core.db.enums import ApprovalDecision, ApprovalStatus, AssetType
+from app.core.models import Asset, Episode
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import NotFoundError, ValidationError
 
 
-def _asset(session: Session) -> Asset:
-    asset = Asset(
-        asset_type=AssetType.IMAGE,
-        original_filename="f.png",
-        relative_path="episodes/ep001/images/f.png",
-        checksum="a" * 64,
-    )
+def _asset(session: Session, **overrides: object) -> Asset:
+    defaults: dict[str, object] = {
+        "asset_type": AssetType.IMAGE,
+        "original_filename": "f.png",
+        "relative_path": "episodes/ep001/images/f.png",
+        "checksum": "a" * 64,
+    }
+    defaults.update(overrides)
+    asset = Asset(**defaults)
     session.add(asset)
     session.flush()
     return asset
@@ -101,3 +103,50 @@ def test_submit_for_review_validates_entity_without_writing_a_record(session: Se
     state = service.submit_for_review(session, "asset", asset.id)
     assert state is None  # no decision recorded yet
     assert service.list_approval_history(session, "asset", asset.id) == []
+
+
+# --- Milestone 3.5: review queue (list_pending_review_assets) ---------
+
+
+def test_list_pending_review_assets_returns_only_draft_assets(session: Session) -> None:
+    service = ApprovalService()
+    draft_asset = _asset(session)
+    _asset(
+        session,
+        relative_path="episodes/ep001/images/g.png",
+        checksum="b" * 64,
+        approval_status=ApprovalStatus.APPROVED,
+    )
+
+    pending = service.list_pending_review_assets(session)
+
+    assert [a.id for a in pending] == [draft_asset.id]
+
+
+def test_list_pending_review_assets_filters_by_episode(session: Session) -> None:
+    service = ApprovalService()
+    episode = Episode(slug="ep001_test", number=1, title_ar="ع", title_en="Test", lesson="Sharing")
+    session.add(episode)
+    session.flush()
+
+    in_episode = _asset(session, episode_id=episode.id)
+    _asset(session, relative_path="episodes/ep002/images/g.png", checksum="c" * 64)
+
+    pending = service.list_pending_review_assets(session, episode_id=episode.id)
+
+    assert [a.id for a in pending] == [in_episode.id]
+
+
+def test_list_pending_review_assets_filters_by_source_tool(session: Session) -> None:
+    service = ApprovalService()
+    _asset(session)
+    generated = _asset(
+        session,
+        relative_path="episodes/ep001/images/h.png",
+        checksum="d" * 64,
+        source_tool="mock_provider",
+    )
+
+    pending = service.list_pending_review_assets(session, source_tool="mock_provider")
+
+    assert [a.id for a in pending] == [generated.id]

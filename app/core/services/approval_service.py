@@ -9,6 +9,12 @@ state (e.g. it does not flip ``CharacterVersion.status`` or
 this service as a building block *and* perform their own domain
 validation before/around it, so approval here can never bypass that
 validation. See ``docs/15_APPROVAL_AND_LICENSE_WORKFLOW.md``.
+
+Milestone 3.5 (``docs/18_AI_ARCHITECTURE_PLAN.md`` §10) extends this
+service with :meth:`list_pending_review_assets` — the "review queue"
+for AI-generated (and manually imported) draft assets. This is a
+read-only query over the same ``Asset.approval_status`` concept this
+service already owns, not a new domain concept or module.
 """
 
 from __future__ import annotations
@@ -17,7 +23,7 @@ import uuid
 
 from sqlalchemy.orm import Session
 
-from app.core.db.enums import ApprovalDecision
+from app.core.db.enums import ApprovalDecision, ApprovalStatus
 from app.core.models import (
     Asset,
     CharacterReference,
@@ -140,6 +146,32 @@ class ApprovalService:
             .first()
         )
         return latest.decision if latest is not None else None
+
+    def list_pending_review_assets(
+        self,
+        session: Session,
+        *,
+        episode_id: uuid.UUID | None = None,
+        character_version_id: uuid.UUID | None = None,
+        source_tool: str | None = None,
+    ) -> list[Asset]:
+        """The asset review queue: every asset still awaiting a decision.
+
+        "Pending review" is simply ``Asset.approval_status == draft`` —
+        no new concept, no new table, and no distinction between an
+        asset a human imported and one an AI workflow generated (see
+        ``docs/18_AI_ARCHITECTURE_PLAN.md`` §10). Filter by
+        ``source_tool`` (e.g. ``"mock_provider"``) to see only
+        AI-generated candidates.
+        """
+        query = session.query(Asset).filter_by(approval_status=ApprovalStatus.DRAFT)
+        if episode_id is not None:
+            query = query.filter_by(episode_id=episode_id)
+        if character_version_id is not None:
+            query = query.filter_by(character_version_id=character_version_id)
+        if source_tool is not None:
+            query = query.filter_by(source_tool=source_tool)
+        return query.order_by(Asset.created_at).all()
 
     def _record(
         self,

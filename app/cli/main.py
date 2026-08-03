@@ -16,6 +16,7 @@ Usage (from the repository root, inside the venv)::
 from __future__ import annotations
 
 import argparse
+import json
 import subprocess
 import sys
 import uuid
@@ -23,10 +24,13 @@ from pathlib import Path
 
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.core.ai.orchestrator import AIOrchestrator
+from app.core.ai.providers import PROVIDER_REGISTRY
 from app.core.db.engine import create_db_engine, create_session_factory
 from app.core.db.enums import AssetType
 from app.core.db.seed import seed_demo_data
 from app.core.models import Asset
+from app.core.services.approval_service import ApprovalService
 from app.core.services.asset_import_service import AssetImportService, ImportRequest
 from app.core.services.episode_service import EpisodeService
 from app.core.services.exceptions import ServiceError
@@ -180,6 +184,66 @@ def cmd_create_default_tasks(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_list_ai_workflows(_args: argparse.Namespace) -> int:
+    for name in AIOrchestrator().list_workflows():
+        print(name)
+    return 0
+
+
+def cmd_list_ai_providers(args: argparse.Namespace) -> int:
+    orchestrator = AIOrchestrator()
+    if args.modality:
+        for name in orchestrator.list_available_providers(args.modality):
+            print(name)
+        return 0
+    for name, provider_cls in PROVIDER_REGISTRY.items():
+        provider = provider_cls()
+        modalities = ",".join(sorted(provider.supported_modalities))
+        print(f"{name}  configured={provider.is_configured()}  modalities={modalities}")
+    return 0
+
+
+def cmd_run_ai_workflow(args: argparse.Namespace) -> int:
+    # AIOrchestrator.run_workflow ultimately calls AssetImportService.import_asset,
+    # which owns its own transaction (see docs/14) — a plain session here,
+    # not session_scope, matching cmd_import_asset above.
+    with _session_factory()() as session:
+        variables = json.loads(args.variables) if args.variables else {}
+        parameters = json.loads(args.parameters) if args.parameters else {}
+        result = AIOrchestrator().run_workflow(
+            session,
+            args.workflow,
+            provider_name=args.provider,
+            prompt_template_id=uuid.UUID(args.prompt_template_id),
+            variables=variables,
+            parameters=parameters,
+            episode_id=uuid.UUID(args.episode_id) if args.episode_id else None,
+            scene_id=uuid.UUID(args.scene_id) if args.scene_id else None,
+            short_id=uuid.UUID(args.short_id) if args.short_id else None,
+            character_id=uuid.UUID(args.character_id) if args.character_id else None,
+            character_version_id=(
+                uuid.UUID(args.character_version_id) if args.character_version_id else None
+            ),
+            notes=args.notes,
+        )
+        print(f"Generated asset {result.asset.id} -> {result.asset.relative_path}")
+        print(f"Provider: {result.generation_result.provider_name}  (status: draft, awaiting review)")
+    return 0
+
+
+def cmd_list_review_queue(args: argparse.Namespace) -> int:
+    with _session_factory()() as session:
+        assets = ApprovalService().list_pending_review_assets(
+            session,
+            episode_id=uuid.UUID(args.episode_id) if args.episode_id else None,
+            source_tool=args.source_tool,
+        )
+        for asset in assets:
+            source = asset.source_tool or "-"
+            print(f"{asset.id}  {asset.asset_type.value:10s} source_tool={source:16s} {asset.relative_path}")
+    return 0
+
+
 # --- argument parser --------------------------------------------------
 
 
@@ -246,6 +310,42 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("slug", help="Episode slug or UUID.")
     p.set_defaults(func=cmd_create_default_tasks)
+
+    p = subparsers.add_parser("list-ai-workflows", help="List available AI workflow names.")
+    p.set_defaults(func=cmd_list_ai_workflows)
+
+    p = subparsers.add_parser(
+        "list-ai-providers", help="List registered AI providers and their configured status."
+    )
+    p.add_argument(
+        "--modality", choices=["text", "image", "video", "voice", "song"],
+        help="Only show providers available for this modality.",
+    )
+    p.set_defaults(func=cmd_list_ai_providers)
+
+    p = subparsers.add_parser(
+        "run-ai-workflow",
+        help="Run an AI generation workflow (mock provider only in Milestone 3.5).",
+    )
+    p.add_argument("workflow", help='e.g. "character_reference_image", "scene_image".')
+    p.add_argument("--provider", default="mock_provider")
+    p.add_argument("--prompt-template-id", required=True)
+    p.add_argument("--variables", help="JSON object of template variables.")
+    p.add_argument("--parameters", help="JSON object of provider parameters.")
+    p.add_argument("--episode-id")
+    p.add_argument("--scene-id")
+    p.add_argument("--short-id")
+    p.add_argument("--character-id")
+    p.add_argument("--character-version-id")
+    p.add_argument("--notes")
+    p.set_defaults(func=cmd_run_ai_workflow)
+
+    p = subparsers.add_parser(
+        "list-review-queue", help="List draft assets awaiting review (manual or AI-generated)."
+    )
+    p.add_argument("--episode-id", help="Filter to one episode's assets.")
+    p.add_argument("--source-tool", help='Filter to one source, e.g. "mock_provider".')
+    p.set_defaults(func=cmd_list_review_queue)
 
     return parser
 
