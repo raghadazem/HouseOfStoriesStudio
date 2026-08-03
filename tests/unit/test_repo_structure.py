@@ -63,6 +63,8 @@ REQUIRED_FILES = [
     "app/gui/theme/manager.py",
     "app/gui/windows/main_window.py",
     "app/gui/pages/dashboard_page.py",
+    "app/gui/widgets/elevated_card.py",
+    "app/gui/widgets/app_logo.py",
 ]
 
 REQUIRED_DOCS = [
@@ -89,6 +91,7 @@ REQUIRED_DOCS = [
     "docs/20_GUI_ARCHITECTURE.md",
     "docs/21_DESIGN_SYSTEM.md",
     "docs/22_MILESTONE_4A_STATUS.md",
+    "docs/23_UI_UX_POLISH_STATUS.md",
 ]
 
 

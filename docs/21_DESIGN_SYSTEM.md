@@ -1,6 +1,6 @@
 # 21 — Design System
 
-**Milestone:** 4A — Application Shell
+**Milestone:** 4A — Application Shell (updated by the UI/UX polish pass, `docs/23_UI_UX_POLISH_STATUS.md`)
 **Package:** `app/gui/theme/`, `app/gui/widgets/`
 
 ---
@@ -17,7 +17,7 @@ A modern creative-production tool — closer to Notion/Figma/Canva Desktop than 
 |---|---|
 | `background` / `surface` / `surface_alt` / `border` | Page background, card/panel surfaces, a slightly-different surface for footers/dividers, hairline borders |
 | `text_primary` / `text_secondary` / `text_muted` / `text_on_accent` | Body text hierarchy; `text_on_accent` for text drawn on a filled accent-color button |
-| `accent` / `accent_hover` / `accent_pressed` | The one brand color and its two interaction states |
+| `accent` / `accent_hover` / `accent_pressed` / `accent_soft` | The one brand color, its two interaction states, and a tinted background (icon chips, the "current" step dot) |
 | `success` / `warning` / `danger` / `info` | `StatusBadge` and summary-card indicator colors |
 | `sidebar_background` / `sidebar_text` / `sidebar_text_muted` / `sidebar_selected_background` / `sidebar_selected_text` | The sidebar is deliberately a separate (darker) surface from the main content area in both themes, like Notion/Figma's side rail |
 | `overlay` / `shadow` | `LoadingOverlay`'s scrim; reserved for future drop-shadow use |
@@ -33,7 +33,11 @@ Two mechanisms widgets use to receive themed styling from that one stylesheet:
 1. **Object names**, for one-off named elements: `self.setObjectName("topBar")` → `QWidget#topBar { ... }` in the QSS.
 2. **The `class` dynamic property**, for variant styling of an otherwise-generic widget type — e.g. every `SummaryCard` sets `self.setProperty("class", "card")`, matched by `QFrame[class="card"] { ... }`. A `StatusBadge` sets `class` to `badge-success`/`badge-warning`/`badge-danger`/`badge-info`/`badge-neutral` depending on its variant, and calls `style().unpolish(self); style().polish(self)` after changing it — Qt caches computed style per widget, so changing a dynamic property used in a selector requires this repolish to actually take effect immediately.
 
-A custom-painted widget (there are exactly two: `LoadingSpinner`, `LoadingOverlay` — QSS can't style a hand-drawn `QPainter` arc or a translucent scrim) reads `ThemeManager.tokens` directly at paint time and listens to `ThemeManager.theme_changed` to repaint when the user switches themes.
+A custom-painted widget (`LoadingSpinner`, `LoadingOverlay`, `AppLogo` — QSS can't style a hand-drawn `QPainter` arc, a translucent scrim, or a geometric brand mark) reads `ThemeManager.tokens` directly at paint time and listens to `ThemeManager.theme_changed` to repaint when the user switches themes.
+
+### Real animation vs. QSS state changes
+
+QSS `:hover`/`:checked` selectors swap styles *instantly* — Qt Style Sheets have no `transition` equivalent. Where an actual eased animation was wanted (card hover elevation, page-switch fade), it's built with `QPropertyAnimation` directly in Python, not QSS: `ElevatedCard` (`app/gui/widgets/elevated_card.py`) animates its `QGraphicsDropShadowEffect`'s blur radius and offset on hover enter/leave, and `MainWindow._animate_page_transition` fades each newly shown page in via a `QGraphicsOpacityEffect`. Every other hover/pressed state in the app is a QSS instant swap — a real, deliberate distinction, not an inconsistency. See `docs/23_UI_UX_POLISH_STATUS.md` §9.
 
 ### The one gotcha this milestone hit and documented
 
@@ -43,7 +47,12 @@ A QSS selector only applies to a widget that actually matches it — a plain `QW
 
 | Widget | What it's for | Key API |
 |---|---|---|
-| `SummaryCard` | One dashboard metric: icon, title, big value, optional subtitle/badge | `set_value(str)`, `set_subtitle(str)`, `set_badge(text, variant)` |
+| `ElevatedCard` | Base class for every card: `class="card"` QSS + animated hover elevation (see above) | subclass it; `_animate_to(blur, offset)` if you need to trigger it manually |
+| `SummaryCard` | One dashboard metric: icon chip, title, big value, optional progress bar, optional subtitle/badge. Extends `ElevatedCard`. | `set_value(str)`, `set_subtitle(str)`, `set_badge(text, variant)`, `set_progress(ratio: float)` |
+| `ActionCard` | One clickable "production shortcut": icon, title, optional description. Extends `ElevatedCard`. | `clicked` signal |
+| `ProgressStepper` | A horizontal done/current/upcoming stage indicator. Purely presentational — no domain knowledge. | `set_progress(steps: list[str], current_index: int \| None)` |
+| `ActivityTimeline` | Icon + friendly title + relative-time rows, built from parsed log lines | `set_entries(list[ActivityEntry])`, `entries` (read-only); module-level `parse_log_line(line)`/`format_relative_time(dt)` |
+| `AppLogo` | The custom-painted brand mark (see §7 of `docs/23`) | constructor only: `theme`, `size` |
 | `SectionHeader` | A page/section title + optional subtitle + optional trailing widget (e.g. a button) | `set_title`, `set_subtitle` |
 | `StatusBadge` | A small colored pill (`success`/`warning`/`danger`/`info`/`neutral`) | `set_text`, `set_variant` |
 | `SearchBox` | A labeled search input with a leading icon | `text()`, `clear()`, `return_pressed` signal — not wired to any real search yet (no list screen exists in 4A to search) |
@@ -52,7 +61,7 @@ A QSS selector only applies to a widget that actually matches it — a plain `QW
 | `LoadingSpinner` / `LoadingOverlay` | A rotating-arc spinner and a full-cover semi-transparent scrim+spinner+message | `start()`, `stop()`, `set_message` |
 | `dialogs.show_info/show_warning/show_error/confirm/show_not_implemented` | The only way any page shows a message dialog | plain functions, not classes |
 
-Nothing here is used speculatively without a real call site: `LoadingOverlay` is wired into `DashboardPage`'s "Run Mock AI" quick action (a real, if brief, async-feeling operation); `EmptyState` backs every summary card's zero-data subtitle text and the Recent Activity panel; `dialogs.show_not_implemented` backs `Create Episode`/`Import Asset`/every placeholder sidebar page.
+Nothing here is used speculatively without a real call site: `LoadingOverlay` is wired into `DashboardPage`'s "Run Mock AI" quick action (a real, if brief, async-feeling operation); `EmptyState` backs every summary card's zero-data subtitle text, the Production Progress panel's no-episode state, and the Recent Activity panel; `dialogs.show_not_implemented` backs `Create Episode`/`Import Asset`/every placeholder sidebar page; `ProgressStepper`/`ActivityTimeline` are both driven by real data the Dashboard already reads (`Episode.pipeline_stage`, `data/logs/app.log`) — neither has a mode that shows fabricated content.
 
 ## 5. What Milestone 4B Inherits
 

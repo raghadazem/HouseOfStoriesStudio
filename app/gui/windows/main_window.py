@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation
 from PySide6.QtWidgets import (
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -60,7 +62,7 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self.top_bar = TopBar(version=__version__)
+        self.top_bar = TopBar(version=__version__, theme=self._theme)
         outer.addWidget(self.top_bar)
 
         body = QHBoxLayout()
@@ -130,10 +132,26 @@ class MainWindow(QMainWindow):
         page = self._pages.get(key)
         if page is not None:
             self.stack.setCurrentWidget(page)
+            self._animate_page_transition(page)
         label = next((item.label for item in NAV_ITEMS if item.key == key), key)
         self.set_state(f"Viewing {label}")
         if key == "dashboard":
             self.dashboard_page.refresh()
+
+    def _animate_page_transition(self, page: QWidget) -> None:
+        """A brief fade-in on the newly shown page — QStackedWidget has no
+        built-in transition, and this is cheap enough to run on every
+        navigation without feeling like it's slowing anything down."""
+        effect = QGraphicsOpacityEffect(page)
+        page.setGraphicsEffect(effect)
+        animation = QPropertyAnimation(effect, b"opacity", page)
+        animation.setDuration(180)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.finished.connect(lambda: page.setGraphicsEffect(None))
+        self._page_transition_anim = animation  # keep a live reference
+        animation.start()
 
     def _on_theme_toggle(self) -> None:
         new_theme = self._theme.toggle()

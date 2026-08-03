@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.db.enums import ApprovalStatus, AssetType
+from app.core.db.enums import ApprovalStatus, AssetType, PipelineStage
 from app.core.models import Asset, Character, Episode
 from app.gui.context import ApplicationContext
 from app.gui.pages.dashboard_page import DashboardPage
@@ -26,7 +26,8 @@ def test_dashboard_shows_empty_state_on_fresh_database(dashboard: DashboardPage)
     assert dashboard._assets_card._value_label.text() == "0"
     assert dashboard._review_card._value_label.text() == "0"
     assert dashboard._activity_empty.isVisible()
-    assert not dashboard._activity_list.isVisible()
+    assert not dashboard._activity_timeline.isVisible()
+    assert dashboard._progress_empty.isVisible()
 
 
 def test_dashboard_shows_real_counts_after_seeding(
@@ -181,7 +182,34 @@ def test_recent_activity_shows_log_lines_once_something_was_logged(
     page.show()
     page.refresh()
 
-    assert page._activity_list.isVisible()
+    assert page._activity_timeline.isVisible()
     assert not page._activity_empty.isVisible()
-    assert page._activity_list.count() >= 1
-    assert "a real activity line" in page._activity_list.item(0).text()
+    assert len(page._activity_timeline.entries) >= 1
+    assert "a real activity line" in page._activity_timeline.entries[0].title
+
+
+def test_production_progress_panel_reflects_episode_pipeline_stage(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    with gui_context.session_scope() as session:
+        session.add(
+            Episode(
+                slug="ep001_test", number=1, title_ar="ع", title_en="My Episode",
+                lesson="Sharing", pipeline_stage=PipelineStage.STORYBOARD,
+            )
+        )
+
+    page = DashboardPage(gui_context, theme)
+    qtbot.addWidget(page)
+    page.show()  # isVisible() only reflects reality once the widget chain is shown
+
+    assert not page._progress_empty.isVisible()
+    assert page._progress_stepper.isVisible()
+    assert "My Episode" in page._progress_header._subtitle_label.text()
+    assert "Storyboard" in page._progress_header._subtitle_label.text()
+    # PipelineStage.STORYBOARD maps to step index 1 ("Storyboard") — that
+    # step's dot should be "current", the step before it "done".
+    script_dot = page._progress_stepper._layout.itemAt(0).widget().layout().itemAt(0).widget()
+    storyboard_dot = page._progress_stepper._layout.itemAt(2).widget().layout().itemAt(0).widget()
+    assert script_dot.property("class") == "stepDot-done"
+    assert storyboard_dot.property("class") == "stepDot-current"

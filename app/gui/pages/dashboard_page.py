@@ -1,21 +1,24 @@
-"""DashboardPage — the one functional screen in Milestone 4A.
+"""DashboardPage — the one functional screen in Milestone 4A (UI/UX-polished).
 
 Reads real counts through ``ApplicationContext``'s services (never
 instantiating one itself), shows friendly empty states when the
 database has no data yet (or hasn't been migrated at all), and wires
 up whichever quick actions already have a real service behind them.
+
+Visual hierarchy (top to bottom): Production Progress → Dashboard
+Summary → Quick Actions → Recent Activity. Branding lives in the top
+bar, above this page, not duplicated here — see
+``docs/23_UI_UX_POLISH_STATUS.md`` for the full design rationale.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
     QApplication,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
-    QListWidget,
-    QListWidgetItem,
-    QPushButton,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -23,17 +26,21 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import OperationalError
 
 from app.core.ai.exceptions import ProviderNotConfiguredError
-from app.core.db.enums import ProductionTaskStatus, PromptCategory, PromptType
+from app.core.db.enums import PipelineStage, ProductionTaskStatus, PromptCategory, PromptType
 from app.core.models import Asset, Episode, ProductionTask
 from app.core.services.exceptions import ConflictError, ServiceError
 from app.gui.context import ApplicationContext
 from app.gui.theme.manager import ThemeManager
 from app.gui.theme.tokens import METRICS
 from app.gui.widgets import (
+    ActionCard,
+    ActivityTimeline,
     EmptyState,
     LoadingOverlay,
+    ProgressStepper,
     SectionHeader,
     SummaryCard,
+    parse_log_line,
     show_error,
     show_info,
     show_not_implemented,
@@ -41,6 +48,30 @@ from app.gui.widgets import (
 
 _DASHBOARD_TEMPLATE_NAME = "dashboard_quick_thumbnail"
 _ACTIVITY_MAX_LINES = 12
+
+# A GUI-only display grouping of the existing Episode.pipeline_stage
+# enum (app/core/db/enums.py) into the 7 founder-specified stages for
+# the Production Progress stepper. Changing this list changes nothing
+# about how pipeline_stage is stored or validated — see
+# docs/23_UI_UX_POLISH_STATUS.md for why this stays presentation-only.
+_PROGRESS_STEPS = ["Script", "Storyboard", "Images", "Voice", "Video", "SEO", "Upload"]
+
+_STAGE_TO_STEP_INDEX: dict[PipelineStage, int] = {
+    PipelineStage.IDEA: 0,
+    PipelineStage.LESSON: 0,
+    PipelineStage.OUTLINE: 0,
+    PipelineStage.SCRIPT: 0,
+    PipelineStage.STORYBOARD: 1,
+    PipelineStage.IMAGE_PROMPTS: 2,
+    PipelineStage.VIDEO_PROMPTS: 2,
+    PipelineStage.THUMBNAIL: 2,
+    PipelineStage.VOICE: 3,
+    PipelineStage.SONG: 3,
+    PipelineStage.EDITING: 4,
+    PipelineStage.SEO: 5,
+    PipelineStage.READY_TO_PUBLISH: 6,
+    PipelineStage.PUBLISHED: 6,
+}
 
 
 class DashboardPage(QWidget):
@@ -69,16 +100,54 @@ class DashboardPage(QWidget):
 
         layout = QVBoxLayout(content)
         layout.setContentsMargins(
-            METRICS.spacing_lg, METRICS.spacing_lg, METRICS.spacing_lg, METRICS.spacing_lg
+            METRICS.spacing_xl, METRICS.spacing_lg, METRICS.spacing_xl, METRICS.spacing_xl
         )
         layout.setSpacing(METRICS.spacing_lg)
 
-        layout.addWidget(
-            SectionHeader("Dashboard", "An overview of your production studio")
-        )
+        layout.addWidget(self._build_progress_panel())
+        layout.addLayout(self._build_summary_section())
+        layout.addLayout(self._build_quick_actions_section())
+        layout.addWidget(self._build_activity_panel())
 
-        self._cards_grid = QGridLayout()
-        self._cards_grid.setSpacing(METRICS.spacing_md)
+        self._overlay = LoadingOverlay(self, theme)
+
+        self.refresh()
+
+    # --- 1. Production Progress ------------------------------------------------
+
+    def _build_progress_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setProperty("class", "card")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(
+            METRICS.spacing_lg, METRICS.spacing_md, METRICS.spacing_lg, METRICS.spacing_lg
+        )
+        panel_layout.setSpacing(METRICS.spacing_md)
+
+        self._progress_header = SectionHeader("Production Progress", "No active episode yet")
+        panel_layout.addWidget(self._progress_header)
+
+        self._progress_stepper = ProgressStepper(_PROGRESS_STEPS, None)
+        panel_layout.addWidget(self._progress_stepper)
+
+        self._progress_empty = EmptyState(
+            "No active episode yet — seed demo data or create one to see its progress here.",
+            icon="🎬",
+        )
+        self._progress_empty.setVisible(False)
+        panel_layout.addWidget(self._progress_empty)
+
+        return panel
+
+    # --- 2. Dashboard Summary ----------------------------------------------------
+
+    def _build_summary_section(self) -> QVBoxLayout:
+        section = QVBoxLayout()
+        section.setSpacing(METRICS.spacing_md)
+        section.addWidget(SectionHeader("Overview", "Your production studio at a glance"))
+
+        grid = QGridLayout()
+        grid.setSpacing(METRICS.spacing_md)
         self._episodes_card = SummaryCard("🎬", "Episodes")
         self._characters_card = SummaryCard("👧", "Characters")
         self._assets_card = SummaryCard("🖼", "Assets")
@@ -90,46 +159,34 @@ class DashboardPage(QWidget):
             self._review_card, self._tasks_card, self._provider_card,
         ]
         for index, card in enumerate(cards):
-            self._cards_grid.addWidget(card, index // 3, index % 3)
-        layout.addLayout(self._cards_grid)
+            grid.addWidget(card, index // 3, index % 3)
+            grid.setColumnStretch(index % 3, 1)
+        section.addLayout(grid)
+        return section
 
-        layout.addWidget(SectionHeader("Quick Actions"))
-        layout.addLayout(self._build_quick_actions())
+    # --- 3. Quick Actions ---------------------------------------------------------
 
-        layout.addWidget(SectionHeader("Recent Activity"))
-        self._activity_list = QListWidget()
-        self._activity_list.setMaximumHeight(220)
-        self._activity_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self._activity_list.setTextElideMode(Qt.TextElideMode.ElideRight)
-        self._activity_empty = EmptyState("No activity yet.", icon="🕘")
-        layout.addWidget(self._activity_list)
-        layout.addWidget(self._activity_empty)
+    def _build_quick_actions_section(self) -> QVBoxLayout:
+        section = QVBoxLayout()
+        section.setSpacing(METRICS.spacing_md)
+        section.addWidget(SectionHeader("Quick Actions", "Jump straight into production"))
 
-        layout.addStretch(1)
-
-        self._overlay = LoadingOverlay(self, theme)
-
-        self.refresh()
-
-    # --- quick actions ---------------------------------------------------------
-
-    def _build_quick_actions(self) -> QHBoxLayout:
         row = QHBoxLayout()
-        row.setSpacing(METRICS.spacing_sm)
+        row.setSpacing(METRICS.spacing_md)
 
         actions = [
-            ("➕ Create Episode", self._on_create_episode),
-            ("📂 Open Episode 001", self._on_open_episode_001),
-            ("📥 Import Asset", self._on_import_asset),
-            ("✨ Run Mock AI", self._on_run_mock_ai),
-            ("✅ Open Review Queue", self._on_open_review_queue),
+            ("➕", "Create Episode", "Start a new episode", self._on_create_episode),
+            ("📂", "Open Episode 001", "Review the demo episode", self._on_open_episode_001),
+            ("📥", "Import Asset", "Bring in a file", self._on_import_asset),
+            ("✨", "Run Mock AI", "Generate a test thumbnail", self._on_run_mock_ai),
+            ("✅", "Review Queue", "See what's pending", self._on_open_review_queue),
         ]
-        for label, handler in actions:
-            button = QPushButton(label)
-            button.clicked.connect(handler)
-            row.addWidget(button)
-        row.addStretch(1)
-        return row
+        for icon, title, description, handler in actions:
+            card = ActionCard(icon, title, description)
+            card.clicked.connect(handler)
+            row.addWidget(card, stretch=1)
+        section.addLayout(row)
+        return section
 
     def _on_create_episode(self) -> None:
         show_not_implemented(self, "Create Episode")
@@ -230,6 +287,27 @@ class DashboardPage(QWidget):
     def _on_open_review_queue(self) -> None:
         self.navigate_requested.emit("review_queue")
 
+    # --- 4. Recent Activity --------------------------------------------------------
+
+    def _build_activity_panel(self) -> QFrame:
+        panel = QFrame()
+        panel.setProperty("class", "card")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(
+            METRICS.spacing_lg, METRICS.spacing_md, METRICS.spacing_lg, METRICS.spacing_lg
+        )
+        panel_layout.setSpacing(METRICS.spacing_md)
+
+        panel_layout.addWidget(SectionHeader("Recent Activity", "What's happened lately"))
+
+        self._activity_timeline = ActivityTimeline()
+        panel_layout.addWidget(self._activity_timeline)
+
+        self._activity_empty = EmptyState("No activity yet.", icon="🕘")
+        panel_layout.addWidget(self._activity_empty)
+
+        return panel
+
     # --- data loading --------------------------------------------------------
 
     def refresh(self) -> None:
@@ -245,6 +323,12 @@ class DashboardPage(QWidget):
                     .count()
                 )
                 total_tasks = session.query(ProductionTask).count()
+                active_episode = session.query(Episode).filter_by(number=1).one_or_none()
+                active_episode_summary = (
+                    (active_episode.title_en, active_episode.pipeline_stage)
+                    if active_episode is not None
+                    else None
+                )
         except OperationalError:
             self._show_db_not_ready()
             return
@@ -272,6 +356,8 @@ class DashboardPage(QWidget):
         self._tasks_card.set_subtitle(
             f"{open_tasks} open of {total_tasks} total" if total_tasks else "No tasks yet"
         )
+        if total_tasks:
+            self._tasks_card.set_progress((total_tasks - open_tasks) / total_tasks)
 
         providers = self._ctx.ai_orchestrator.list_available_providers("image")
         if providers:
@@ -281,11 +367,24 @@ class DashboardPage(QWidget):
             self._provider_card.set_value("None")
             self._provider_card.set_badge("Not configured", "danger")
 
+        self._refresh_progress_panel(active_episode_summary)
         self._load_recent_activity()
+
+    def _refresh_progress_panel(self, active_episode_summary: tuple[str, PipelineStage] | None) -> None:
+        if active_episode_summary is None:
+            self._progress_header.set_subtitle("No active episode yet")
+            self._progress_stepper.setVisible(False)
+            self._progress_empty.setVisible(True)
+            return
+
+        title, stage = active_episode_summary
+        self._progress_header.set_subtitle(f"{title} · {stage.value.replace('_', ' ').title()}")
+        self._progress_stepper.setVisible(True)
+        self._progress_empty.setVisible(False)
+        self._progress_stepper.set_progress(_PROGRESS_STEPS, _STAGE_TO_STEP_INDEX.get(stage, 0))
 
     def _load_recent_activity(self) -> None:
         log_path = self._ctx.config.log_dir / "app.log"
-        self._activity_list.clear()
         lines: list[str] = []
         if log_path.is_file():
             try:
@@ -294,16 +393,16 @@ class DashboardPage(QWidget):
             except OSError:
                 lines = []
 
-        if not lines:
-            self._activity_list.hide()
-            self._activity_empty.show()
+        entries = [entry for entry in (parse_log_line(line) for line in reversed(lines)) if entry is not None]
+
+        if not entries:
+            self._activity_timeline.setVisible(False)
+            self._activity_empty.setVisible(True)
             return
 
-        self._activity_empty.hide()
-        self._activity_list.show()
-        for line in reversed(lines):
-            item = QListWidgetItem(line.strip())
-            self._activity_list.addItem(item)
+        self._activity_empty.setVisible(False)
+        self._activity_timeline.setVisible(True)
+        self._activity_timeline.set_entries(entries)
 
     def _show_db_not_ready(self) -> None:
         show_error(

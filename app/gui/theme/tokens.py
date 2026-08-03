@@ -34,6 +34,7 @@ class ThemeTokens:
     accent: str
     accent_hover: str
     accent_pressed: str
+    accent_soft: str  # a tinted accent background — icon chips, the "current" step dot
 
     # Status colors — used by StatusBadge and summary-card indicators
     success: str
@@ -67,6 +68,7 @@ LIGHT_TOKENS = ThemeTokens(
     accent="#6C5CE7",
     accent_hover="#7D6EF0",
     accent_pressed="#5B4BD6",
+    accent_soft="#EFECFD",
     success="#2FB380",
     warning="#E8A93B",
     danger="#E5594F",
@@ -93,6 +95,7 @@ DARK_TOKENS = ThemeTokens(
     accent="#8A7CF0",
     accent_hover="#9A8DF5",
     accent_pressed="#7566E0",
+    accent_soft="#292447",
     success="#3FCB98",
     warning="#F0B94F",
     danger="#F0685E",
@@ -124,19 +127,19 @@ class Metrics:
     spacing_lg: int = 24
     spacing_xl: int = 32
 
-    radius_sm: int = 6
-    radius_md: int = 10
-    radius_lg: int = 14
+    radius_sm: int = 8
+    radius_md: int = 12
+    radius_lg: int = 16
 
     font_family: str = '"Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif'
     font_size_sm: int = 11
     font_size_base: int = 13
     font_size_md: int = 15
-    font_size_lg: int = 20
-    font_size_xl: int = 26
+    font_size_lg: int = 21
+    font_size_xl: int = 28
 
     sidebar_width: int = 232
-    topbar_height: int = 56
+    topbar_height: int = 64
 
 
 METRICS = Metrics()

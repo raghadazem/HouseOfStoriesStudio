@@ -63,5 +63,6 @@ def test_top_bar_mirrors_status_bar_context(
     qtbot, gui_context: ApplicationContext, gui_settings: AppSettings, qapp
 ) -> None:
     window = _window(qtbot, gui_context, gui_settings, qapp)
-    assert gui_context.database_label in window.top_bar._database_label.text()
-    assert "mock_provider" in window.top_bar._provider_label.text()
+    meta_text = window.top_bar._meta_label.text()
+    assert gui_context.database_label in meta_text
+    assert "mock_provider" in meta_text

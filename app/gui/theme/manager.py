@@ -74,8 +74,8 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         border-bottom: 1px solid {t.border};
     }}
     QLabel#appTitle {{
-        font-size: {m.font_size_md}px;
-        font-weight: 600;
+        font-size: {m.font_size_lg}px;
+        font-weight: 700;
         color: {t.text_primary};
     }}
     QLabel#appSubtitle {{
@@ -153,6 +153,89 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
     }}
     QLabel[class="muted"] {{
         color: {t.text_muted};
+    }}
+    QLabel[class="iconChip"] {{
+        background: {t.accent_soft};
+        border-radius: 12px;
+        font-size: {m.font_size_lg}px;
+    }}
+
+    /* --- Card progress bar (SummaryCard) ------------------------------------ */
+    QProgressBar[class="cardProgress"] {{
+        background: {t.surface_alt};
+        border: none;
+        border-radius: 3px;
+    }}
+    QProgressBar[class="cardProgress"]::chunk {{
+        background: {t.accent};
+        border-radius: 3px;
+    }}
+
+    /* --- Action cards (Quick Actions panel) --------------------------------- */
+    QFrame[class="actionCard"] {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_lg}px;
+    }}
+    QFrame[class="actionCard"]:hover {{
+        border: 1px solid {t.accent};
+    }}
+    QLabel[class="actionCardIcon"] {{
+        font-size: {m.font_size_xl}px;
+    }}
+    QLabel[class="actionCardTitle"] {{
+        font-size: {m.font_size_base}px;
+        font-weight: 600;
+        color: {t.text_primary};
+    }}
+
+    /* --- Production progress stepper --------------------------------------- */
+    QLabel[class="stepDot-done"] {{
+        background: {t.success};
+        color: {t.text_on_accent};
+        border-radius: 15px;
+        font-weight: 700;
+    }}
+    QLabel[class="stepDot-current"] {{
+        background: {t.accent};
+        color: {t.text_on_accent};
+        border-radius: 15px;
+        font-weight: 700;
+        border: 2px solid {t.accent_hover};
+    }}
+    QLabel[class="stepDot-upcoming"] {{
+        background: {t.surface_alt};
+        color: {t.text_muted};
+        border-radius: 15px;
+        font-weight: 600;
+        border: 1px solid {t.border};
+    }}
+    QLabel[class="stepLabel-done"], QLabel[class="stepLabel-current"] {{
+        color: {t.text_primary};
+        font-size: {m.font_size_sm}px;
+        font-weight: 600;
+    }}
+    QLabel[class="stepLabel-upcoming"] {{
+        color: {t.text_muted};
+        font-size: {m.font_size_sm}px;
+    }}
+    QWidget[class="stepConnectorDone"] {{ background: {t.accent}; }}
+    QWidget[class="stepConnectorUpcoming"] {{ background: {t.border}; }}
+
+    /* --- Activity timeline --------------------------------------------------- */
+    QWidget[class="activityRow"] {{
+        border-radius: {m.radius_sm}px;
+        background: transparent;
+    }}
+    QWidget[class="activityRow"]:hover {{
+        background: {t.surface_alt};
+    }}
+    QLabel[class="activityIcon"] {{
+        font-size: {m.font_size_md}px;
+    }}
+    QLabel[class="activityTitle"] {{
+        color: {t.text_primary};
+        font-size: {m.font_size_base}px;
     }}
 
     /* --- Buttons ---------------------------------------------------------- */
