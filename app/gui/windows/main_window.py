@@ -1,0 +1,166 @@
+"""MainWindow — the application shell: top bar, sidebar, page stack, status bar."""
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from app import __version__
+from app.gui.context import ApplicationContext
+from app.gui.pages.dashboard_page import DashboardPage
+from app.gui.settings import AppSettings
+from app.gui.theme.manager import ThemeManager
+from app.gui.widgets.placeholder_page import PlaceholderPage
+from app.gui.windows.sidebar import NAV_ITEMS, Sidebar
+from app.gui.windows.top_bar import APP_TITLE, TopBar
+
+
+class MainWindow(QMainWindow):
+    """Composes the shell around whatever page is active in the central stack."""
+
+    def __init__(
+        self,
+        ctx: ApplicationContext,
+        theme: ThemeManager,
+        settings: AppSettings,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._ctx = ctx
+        self._theme = theme
+        self._settings = settings
+
+        self.setWindowTitle(APP_TITLE)
+        self.resize(1440, 900)
+
+        self._build_layout()
+        self._build_status_bar()
+        self._wire_signals()
+
+        self._theme.theme_changed.connect(self._on_theme_changed)
+        self._on_theme_changed(self._theme.theme_name)
+
+        self._restore_geometry()
+        self.set_state("Ready")
+
+    # --- layout ------------------------------------------------------------
+
+    def _build_layout(self) -> None:
+        central = QWidget()
+        central.setObjectName("centralArea")
+
+        outer = QVBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.top_bar = TopBar(version=__version__)
+        outer.addWidget(self.top_bar)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+
+        self.sidebar = Sidebar()
+        body.addWidget(self.sidebar)
+
+        self.stack = QStackedWidget()
+        self._pages: dict[str, QWidget] = {}
+        self.dashboard_page = DashboardPage(self._ctx, self._theme, self)
+        self._add_page("dashboard", self.dashboard_page)
+        for item in NAV_ITEMS:
+            if item.key == "dashboard":
+                continue
+            self._add_page(item.key, PlaceholderPage(item.label))
+        body.addWidget(self.stack, stretch=1)
+
+        outer.addLayout(body, stretch=1)
+        self.setCentralWidget(central)
+
+    def _add_page(self, key: str, page: QWidget) -> None:
+        self._pages[key] = page
+        self.stack.addWidget(page)
+
+    def _build_status_bar(self) -> None:
+        bar = self.statusBar()
+        self._status_database = QLabel()
+        self._status_provider = QLabel()
+        self._status_workspace = QLabel()
+        self._status_state = QLabel()
+        bar.addWidget(self._status_database)
+        bar.addWidget(self._status_provider)
+        bar.addWidget(self._status_workspace)
+        bar.addPermanentWidget(self._status_state)
+
+        self._status_database.setText(f"Database: {self._ctx.database_label}")
+        self._status_workspace.setText(f"Workspace: {self._ctx.workspace_label}")
+        providers = self._ctx.ai_orchestrator.list_available_providers("image")
+        provider_text = ", ".join(providers) if providers else "none configured"
+        self._status_provider.setText(f"AI Provider: {provider_text}")
+
+        self.top_bar.set_database_label(self._ctx.database_label)
+        self.top_bar.set_workspace_label(self._ctx.config.production_dir.name)
+        self.top_bar.set_provider_label(provider_text)
+
+    def set_state(self, text: str) -> None:
+        self._status_state.setText(text)
+
+    # --- signals -------------------------------------------------------------
+
+    def _wire_signals(self) -> None:
+        self.sidebar.item_selected.connect(self._on_nav_selected)
+        self.top_bar.theme_toggle_requested.connect(self._on_theme_toggle)
+        self.top_bar.about_requested.connect(self._on_about)
+        self.dashboard_page.navigate_requested.connect(self.navigate_to)
+
+    def navigate_to(self, key: str) -> None:
+        """Programmatic navigation (e.g. a Dashboard quick action) — goes
+        through the real sidebar button click, not a shortcut around it."""
+        button = self.sidebar.button_for(key)
+        if button is not None:
+            button.click()
+
+    def _on_nav_selected(self, key: str) -> None:
+        page = self._pages.get(key)
+        if page is not None:
+            self.stack.setCurrentWidget(page)
+        label = next((item.label for item in NAV_ITEMS if item.key == key), key)
+        self.set_state(f"Viewing {label}")
+        if key == "dashboard":
+            self.dashboard_page.refresh()
+
+    def _on_theme_toggle(self) -> None:
+        new_theme = self._theme.toggle()
+        self._settings.save_theme(new_theme)
+
+    def _on_theme_changed(self, theme_name: str) -> None:
+        self.top_bar.set_theme_icon(is_dark=(theme_name == "dark"))
+
+    def _on_about(self) -> None:
+        QMessageBox.about(
+            self,
+            "About House of Stories Studio",
+            f"<b>{APP_TITLE}</b><br>بيت الحكايات<br><br>"
+            f"Version {__version__}<br>"
+            "A production-management desktop app for an Arabic children's "
+            "YouTube studio.",
+        )
+
+    # --- window geometry persistence -------------------------------------------
+
+    def _restore_geometry(self) -> None:
+        geometry = self._settings.load_window_geometry()
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+
+    def closeEvent(self, event) -> None:
+        self._settings.save_window_geometry(self.saveGeometry())
+        self._settings.sync()
+        self._ctx.dispose()
+        super().closeEvent(event)

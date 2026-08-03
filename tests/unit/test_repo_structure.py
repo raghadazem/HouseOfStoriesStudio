@@ -56,6 +56,13 @@ REQUIRED_FILES = [
     "app/core/services/production_checklist_service.py",
     "app/core/services/export_package_service.py",
     "app/cli/main.py",
+    "app/core/ai/orchestrator.py",
+    "app/gui/app.py",
+    "app/gui/context.py",
+    "app/gui/settings.py",
+    "app/gui/theme/manager.py",
+    "app/gui/windows/main_window.py",
+    "app/gui/pages/dashboard_page.py",
 ]
 
 REQUIRED_DOCS = [
@@ -77,6 +84,11 @@ REQUIRED_DOCS = [
     "docs/15_APPROVAL_AND_LICENSE_WORKFLOW.md",
     "docs/16_EXPORT_PACKAGE.md",
     "docs/17_MILESTONE_3_STATUS.md",
+    "docs/18_AI_ARCHITECTURE_PLAN.md",
+    "docs/19_MILESTONE_3.5_STATUS.md",
+    "docs/20_GUI_ARCHITECTURE.md",
+    "docs/21_DESIGN_SYSTEM.md",
+    "docs/22_MILESTONE_4A_STATUS.md",
 ]
 
 
@@ -96,17 +108,22 @@ def test_preexisting_documentation_untouched() -> None:
     assert not missing, f"Missing/removed approved documentation: {missing}"
 
 
-def test_gui_package_is_still_a_placeholder() -> None:
-    """Milestone 1 guardrail: app/gui must stay empty until Milestone 4.
+def test_gui_never_imports_db_or_core_services_internals_directly() -> None:
+    """Milestone 4A guardrail: GUI code only reaches the DB through ApplicationContext.
 
-    A full import-boundary check (gui must only call app.core.services,
-    never touch the filesystem/DB directly) belongs with the real GUI
-    code in Milestone 4; this only guards against Milestone 1
-    accidentally starting that work early.
+    Cheap static check (grep for suspicious imports), not a full
+    boundary analysis — good enough to catch a page importing
+    ``app.core.db.engine`` or constructing a service itself instead of
+    going through ``ApplicationContext``.
     """
     gui_dir = REPO_ROOT / "app" / "gui"
-    python_files = list(gui_dir.rglob("*.py"))
-    assert python_files == [gui_dir / "__init__.py"], (
-        "app/gui should only contain the placeholder __init__.py until "
-        "Milestone 4"
-    )
+    forbidden_imports = ("app.core.db.engine", "app.core.db.seed")
+    offenders = []
+    for path in gui_dir.rglob("*.py"):
+        if path.name in {"context.py"}:
+            continue  # ApplicationContext is the one file allowed to wire these up
+        text = path.read_text(encoding="utf-8")
+        for forbidden in forbidden_imports:
+            if forbidden in text:
+                offenders.append((str(path.relative_to(REPO_ROOT)), forbidden))
+    assert not offenders, f"GUI files importing DB internals directly: {offenders}"
