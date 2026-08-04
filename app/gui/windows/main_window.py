@@ -16,10 +16,15 @@ from PySide6.QtWidgets import (
 
 from app import __version__
 from app.gui.context import ApplicationContext
+from app.gui.pages.assets_page import AssetsPage
+from app.gui.pages.characters_page import CharactersPage
 from app.gui.pages.dashboard_page import DashboardPage
+from app.gui.pages.episodes_page import EpisodesPage
+from app.gui.pages.prompts_page import PromptsPage
+from app.gui.pages.review_queue_page import ReviewQueuePage
+from app.gui.pages.settings_page import SettingsPage
 from app.gui.settings import AppSettings
 from app.gui.theme.manager import ThemeManager
-from app.gui.widgets.placeholder_page import PlaceholderPage
 from app.gui.windows.sidebar import NAV_ITEMS, Sidebar
 from app.gui.windows.top_bar import APP_TITLE, TopBar
 
@@ -45,14 +50,15 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._build_status_bar()
         self._wire_signals()
-        # DashboardPage.refresh()es itself once during its own __init__
-        # (so it's a usable standalone widget in tests), which happens
+        # Every page refreshes itself once during its own __init__ (so
+        # each is a usable standalone widget in tests), which happens
         # before the signal connections just above exist — that first
         # episode_updated/review_count_updated emission has no listener
         # yet, so the top bar's episode chip and the sidebar's review
         # badge would otherwise stay unset until the next navigation.
-        # Refresh once more now that both are wired.
+        # Refresh both review-count sources once more now that they're wired.
         self.dashboard_page.refresh()
+        self.review_queue_page.refresh()
 
         self._theme.theme_changed.connect(self._on_theme_changed)
         self._on_theme_changed(self._theme.theme_name)
@@ -83,11 +89,19 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
         self.dashboard_page = DashboardPage(self._ctx, self._theme, self)
+        self.episodes_page = EpisodesPage(self._ctx, self._theme, self)
+        self.characters_page = CharactersPage(self._ctx, self._theme, self)
+        self.assets_page = AssetsPage(self._ctx, self._theme, self)
+        self.prompts_page = PromptsPage(self._ctx, self._theme, self)
+        self.review_queue_page = ReviewQueuePage(self._ctx, self._theme, self)
+        self.settings_page = SettingsPage(self._ctx, self._theme, self._settings, self)
         self._add_page("dashboard", self.dashboard_page)
-        for item in NAV_ITEMS:
-            if item.key == "dashboard":
-                continue
-            self._add_page(item.key, PlaceholderPage(item.label))
+        self._add_page("episodes", self.episodes_page)
+        self._add_page("characters", self.characters_page)
+        self._add_page("assets", self.assets_page)
+        self._add_page("prompts", self.prompts_page)
+        self._add_page("review_queue", self.review_queue_page)
+        self._add_page("settings", self.settings_page)
         body.addWidget(self.stack, stretch=1)
 
         outer.addLayout(body, stretch=1)
@@ -130,6 +144,7 @@ class MainWindow(QMainWindow):
         self.dashboard_page.navigate_requested.connect(self.navigate_to)
         self.dashboard_page.episode_updated.connect(self.top_bar.set_current_episode)
         self.dashboard_page.review_count_updated.connect(self._on_review_count_updated)
+        self.review_queue_page.review_count_updated.connect(self._on_review_count_updated)
 
     def _on_review_count_updated(self, count: int) -> None:
         self.sidebar.set_badge("review_queue", count)
@@ -146,10 +161,15 @@ class MainWindow(QMainWindow):
         if page is not None:
             self.stack.setCurrentWidget(page)
             self._animate_page_transition(page)
+            # Every page owns its own data — re-fetch on every visit so
+            # a change made elsewhere (e.g. approving an asset from the
+            # Review Queue) is reflected immediately, not just on the
+            # first navigation.
+            refresh = getattr(page, "refresh", None)
+            if callable(refresh):
+                refresh()
         label = next((item.label for item in NAV_ITEMS if item.key == key), key)
         self.set_state(f"Viewing {label}")
-        if key == "dashboard":
-            self.dashboard_page.refresh()
 
     def _animate_page_transition(self, page: QWidget) -> None:
         """A brief fade-in on the newly shown page — QStackedWidget has no

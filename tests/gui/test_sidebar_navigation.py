@@ -7,7 +7,6 @@ from app.core.models import Asset, Episode
 from app.gui.context import ApplicationContext
 from app.gui.settings import AppSettings
 from app.gui.theme.manager import ThemeManager
-from app.gui.widgets.placeholder_page import PlaceholderPage
 from app.gui.windows.main_window import MainWindow
 from app.gui.windows.sidebar import NAV_ITEMS
 
@@ -42,26 +41,35 @@ def test_clicking_dashboard_shows_dashboard_page(
     assert window._status_state.text() == "Viewing Dashboard"
 
 
-def test_clicking_unimplemented_item_shows_placeholder_page(
+def test_clicking_episodes_shows_the_real_episodes_page(
     qtbot, gui_context: ApplicationContext, gui_settings: AppSettings, qapp
 ) -> None:
     window = _window(qtbot, gui_context, gui_settings, qapp)
 
     window.sidebar.button_for("episodes").click()
 
-    assert isinstance(window.stack.currentWidget(), PlaceholderPage)
+    assert window.stack.currentWidget() is window.episodes_page
     assert window._status_state.text() == "Viewing Episodes"
 
 
-def test_every_non_dashboard_item_is_a_placeholder(
+def test_every_nav_item_shows_its_own_real_page(
     qtbot, gui_context: ApplicationContext, gui_settings: AppSettings, qapp
 ) -> None:
+    """Milestone 4B: every sidebar item now has a real page (no PlaceholderPage
+    survives in MainWindow's stack) — each maps to its own dedicated widget."""
     window = _window(qtbot, gui_context, gui_settings, qapp)
+    expected_page_by_key = {
+        "dashboard": window.dashboard_page,
+        "episodes": window.episodes_page,
+        "characters": window.characters_page,
+        "assets": window.assets_page,
+        "prompts": window.prompts_page,
+        "review_queue": window.review_queue_page,
+        "settings": window.settings_page,
+    }
     for item in NAV_ITEMS:
-        if item.key == "dashboard":
-            continue
         window.sidebar.button_for(item.key).click()
-        assert isinstance(window.stack.currentWidget(), PlaceholderPage)
+        assert window.stack.currentWidget() is expected_page_by_key[item.key]
 
 
 def test_sidebar_selection_is_exclusive(

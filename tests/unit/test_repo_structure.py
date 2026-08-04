@@ -93,6 +93,7 @@ REQUIRED_DOCS = [
     "docs/22_MILESTONE_4A_STATUS.md",
     "docs/23_UI_UX_POLISH_STATUS.md",
     "docs/24_UI_UX_POLISH_V2_STATUS.md",
+    "docs/25_MILESTONE_4B_STATUS.md",
 ]
 
 

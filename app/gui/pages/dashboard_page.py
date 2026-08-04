@@ -53,6 +53,7 @@ from app.gui.widgets import (
     SectionHeader,
     StatusBadge,
     SummaryCard,
+    age_label,
     parse_log_line,
     show_error,
     show_info,
@@ -86,29 +87,6 @@ _STAGE_TO_STEP_INDEX: dict[PipelineStage, int] = {
     PipelineStage.READY_TO_PUBLISH: 6,
     PipelineStage.PUBLISHED: 6,
 }
-
-
-def _age_label(timestamp: datetime) -> str:
-    """Same bucketing as ``activity_timeline.format_relative_time``, but for
-    ``TimestampMixin`` timestamps (log lines are naive-local instead — see
-    that module's own note). ``TimestampMixin`` columns are declared
-    timezone-aware UTC, but SQLite has no native tz-aware storage, so
-    SQLAlchemy round-trips them as naive datetimes that still represent
-    UTC — treat a naive value as UTC rather than assuming it's already
-    tz-aware."""
-    if timestamp.tzinfo is None:
-        timestamp = timestamp.replace(tzinfo=UTC)
-    seconds = max(0.0, (datetime.now(UTC) - timestamp).total_seconds())
-    if seconds < 60:
-        return "just now"
-    minutes = int(seconds // 60)
-    if minutes < 60:
-        return f"{minutes}m ago"
-    hours = int(minutes // 60)
-    if hours < 24:
-        return f"{hours}h ago"
-    days = int(hours // 24)
-    return f"{days}d ago"
 
 
 class DashboardPage(QWidget):
@@ -422,7 +400,7 @@ class DashboardPage(QWidget):
         self._review_card.set_value_animated(len(pending_review))
         if pending_review:
             oldest = min(asset.created_at for asset in pending_review)
-            self._review_card.set_caption(f"Oldest: {_age_label(oldest)}")
+            self._review_card.set_caption(f"Oldest: {age_label(oldest)}")
             self._review_card.set_badge("Needs attention", "warning")
         else:
             self._review_card.set_caption("Nothing waiting")

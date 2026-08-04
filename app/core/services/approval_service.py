@@ -147,6 +147,56 @@ class ApprovalService:
         )
         return latest.decision if latest is not None else None
 
+    def decide_asset_review(
+        self,
+        session: Session,
+        asset_id: uuid.UUID,
+        decision: ApprovalDecision,
+        *,
+        notes: str | None = None,
+        decided_by: str | None = None,
+    ) -> Asset:
+        """Approve or reject a pending (``draft``) asset from the review queue.
+
+        The entity-specific counterpart to
+        :meth:`CharacterVersionService.approve_character_version` /
+        :meth:`~CharacterVersionService.reject_character_version` — this
+        service already owns :meth:`list_pending_review_assets` (the
+        review queue), so it owns deciding on those assets too, rather
+        than a new ``AssetService`` existing solely for this one
+        transition. Moves ``Asset.approval_status`` (``draft`` ->
+        ``approved``/``rejected``) *and* records the audit-trail
+        ``ApprovalRecord`` via :meth:`approve_entity`/:meth:`reject_entity`
+        in the same flush — never one without the other.
+
+        Raises:
+            NotFoundError: The asset doesn't exist.
+            ValidationError: The asset isn't currently ``draft``, an
+                unsupported ``decision`` was passed, or ``decision`` is
+                ``rejected``/``needs_changes`` without ``notes``.
+        """
+        asset = session.get(Asset, asset_id)
+        if asset is None:
+            raise NotFoundError(f"Asset {asset_id} not found.")
+        if asset.approval_status != ApprovalStatus.DRAFT:
+            raise ValidationError(
+                f"Only a draft asset can be reviewed (current: {asset.approval_status.value})."
+            )
+        if decision == ApprovalDecision.APPROVED:
+            asset.approval_status = ApprovalStatus.APPROVED
+            self.approve_entity(session, "asset", asset_id, decided_by=decided_by, notes=notes)
+        elif decision == ApprovalDecision.REJECTED:
+            self._require_notes(notes, action="reject")
+            asset.approval_status = ApprovalStatus.REJECTED
+            self.reject_entity(session, "asset", asset_id, notes=notes, decided_by=decided_by)
+        else:
+            raise ValidationError(
+                f"decide_asset_review only accepts approved/rejected, not {decision.value!r} "
+                "(there is no 'needs changes' state for an asset — reject it and re-import)."
+            )
+        session.flush()
+        return asset
+
     def list_pending_review_assets(
         self,
         session: Session,

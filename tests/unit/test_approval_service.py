@@ -150,3 +150,58 @@ def test_list_pending_review_assets_filters_by_source_tool(session: Session) -> 
     pending = service.list_pending_review_assets(session, source_tool="mock_provider")
 
     assert [a.id for a in pending] == [generated.id]
+
+
+# --- Milestone 4B: decide_asset_review (the review queue's Approve/Reject) ---
+
+
+def test_decide_asset_review_approves_and_records_history(session: Session) -> None:
+    service = ApprovalService()
+    asset = _asset(session)
+
+    result = service.decide_asset_review(
+        session, asset.id, ApprovalDecision.APPROVED, decided_by="founder"
+    )
+
+    assert result.approval_status == ApprovalStatus.APPROVED
+    history = service.list_approval_history(session, "asset", asset.id)
+    assert [r.decision for r in history] == [ApprovalDecision.APPROVED]
+    assert history[0].decided_by == "founder"
+
+
+def test_decide_asset_review_rejects_and_requires_notes(session: Session) -> None:
+    service = ApprovalService()
+    asset = _asset(session)
+
+    with pytest.raises(ValidationError, match="Notes are required"):
+        service.decide_asset_review(session, asset.id, ApprovalDecision.REJECTED)
+
+    result = service.decide_asset_review(
+        session, asset.id, ApprovalDecision.REJECTED, notes="blurry, redo"
+    )
+    assert result.approval_status == ApprovalStatus.REJECTED
+    history = service.list_approval_history(session, "asset", asset.id)
+    assert history[0].decision == ApprovalDecision.REJECTED
+    assert history[0].notes == "blurry, redo"
+
+
+def test_decide_asset_review_rejects_non_draft_assets(session: Session) -> None:
+    service = ApprovalService()
+    asset = _asset(session, approval_status=ApprovalStatus.APPROVED)
+
+    with pytest.raises(ValidationError, match="Only a draft asset can be reviewed"):
+        service.decide_asset_review(session, asset.id, ApprovalDecision.APPROVED)
+
+
+def test_decide_asset_review_rejects_needs_changes_decision(session: Session) -> None:
+    service = ApprovalService()
+    asset = _asset(session)
+
+    with pytest.raises(ValidationError, match="only accepts approved/rejected"):
+        service.decide_asset_review(session, asset.id, ApprovalDecision.NEEDS_CHANGES, notes="x")
+
+
+def test_decide_asset_review_rejects_missing_asset(session: Session) -> None:
+    service = ApprovalService()
+    with pytest.raises(NotFoundError):
+        service.decide_asset_review(session, uuid.uuid4(), ApprovalDecision.APPROVED)

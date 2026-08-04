@@ -48,12 +48,12 @@ class NavItem:
 
 NAV_ITEMS: tuple[NavItem, ...] = (
     NavItem("dashboard", "dashboard", "Dashboard", "Workspace", implemented=True),
-    NavItem("episodes", "episodes", "Episodes", "Production"),
-    NavItem("characters", "characters", "Characters", "Production"),
-    NavItem("assets", "assets", "Assets", "Production"),
-    NavItem("prompts", "prompts", "Prompts", "Production"),
-    NavItem("review_queue", "review_queue", "Review Queue", "Review"),
-    NavItem("settings", "settings", "Settings", "System"),
+    NavItem("episodes", "episodes", "Episodes", "Production", implemented=True),
+    NavItem("characters", "characters", "Characters", "Production", implemented=True),
+    NavItem("assets", "assets", "Assets", "Production", implemented=True),
+    NavItem("prompts", "prompts", "Prompts", "Production", implemented=True),
+    NavItem("review_queue", "review_queue", "Review Queue", "Review", implemented=True),
+    NavItem("settings", "settings", "Settings", "System", implemented=True),
 )
 
 

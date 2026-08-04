@@ -18,10 +18,17 @@ from app.gui.widgets.dialogs import (
 )
 from app.gui.widgets.elevated_card import ElevatedCard
 from app.gui.widgets.empty_state import EmptyState
+from app.gui.widgets.entity_card import EntityCard
+from app.gui.widgets.entity_row import EntityRow
+from app.gui.widgets.error_state import ErrorState
+from app.gui.widgets.form_dialog import FormDialog
 from app.gui.widgets.loading import LoadingOverlay, LoadingSpinner
 from app.gui.widgets.nav_icon import render_nav_icon
+from app.gui.widgets.page_header import PageHeader
 from app.gui.widgets.placeholder_page import PlaceholderPage
 from app.gui.widgets.progress_stepper import ProgressStepper
+from app.gui.widgets.relative_time import age_label
+from app.gui.widgets.responsive_grid import ResponsiveGrid
 from app.gui.widgets.search_box import SearchBox
 from app.gui.widgets.section_header import SectionHeader
 from app.gui.widgets.status_badge import StatusBadge
@@ -34,14 +41,21 @@ __all__ = [
     "AppLogo",
     "ElevatedCard",
     "EmptyState",
+    "EntityCard",
+    "EntityRow",
+    "ErrorState",
+    "FormDialog",
     "LoadingOverlay",
     "LoadingSpinner",
+    "PageHeader",
     "PlaceholderPage",
     "ProgressStepper",
+    "ResponsiveGrid",
     "SearchBox",
     "SectionHeader",
     "StatusBadge",
     "SummaryCard",
+    "age_label",
     "confirm",
     "parse_log_line",
     "render_nav_icon",

@@ -394,4 +394,175 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         min-height: 24px;
     }}
     QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; }}
+    QScrollBar:horizontal {{
+        background: transparent;
+        height: 10px;
+    }}
+    QScrollBar::handle:horizontal {{
+        background: {t.border};
+        border-radius: 5px;
+        min-width: 24px;
+    }}
+    QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0px; }}
+
+    /* --- Milestone 4B: page header ------------------------------------------ */
+    QLabel[class="pageTitle"] {{
+        font-size: {m.font_size_xl}px;
+        font-weight: 800;
+        color: {t.text_primary};
+        letter-spacing: -0.3px;
+    }}
+    QLabel[class="pageSubtitle"] {{
+        font-size: {m.font_size_base}px;
+        color: {t.text_secondary};
+    }}
+
+    /* --- Milestone 4B: entity rows (Episodes, Prompts, Review Queue) -------- */
+    QPushButton[class="entityRow"] {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_md}px;
+        text-align: left;
+        padding: 0px;
+    }}
+    QPushButton[class="entityRow"]:hover {{
+        border: 1px solid {t.accent};
+        background: {t.accent_soft};
+    }}
+    QPushButton[class="entityRow"]:focus {{
+        border: 1px solid {t.accent};
+        outline: none;
+    }}
+    QLabel[class="entityRowTitle"] {{
+        font-size: {m.font_size_base}px;
+        font-weight: 600;
+        color: {t.text_primary};
+    }}
+    QLabel[class="entityRowSubtitle"] {{
+        font-size: {m.font_size_sm}px;
+        color: {t.text_muted};
+    }}
+
+    /* --- Milestone 4B: entity cards (Characters, Assets grids) -------------- */
+    QPushButton[class="entityCard"] {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_lg}px;
+        text-align: left;
+        padding: 0px;
+    }}
+    QPushButton[class="entityCard"]:hover {{
+        border: 1px solid {t.accent};
+        background: {t.accent_soft};
+    }}
+    QPushButton[class="entityCard"]:focus {{
+        border: 1px solid {t.accent};
+        outline: none;
+    }}
+    QLabel[class="entityCardThumb"] {{
+        background: {t.accent_soft};
+        border-radius: {m.radius_md}px;
+        font-size: 36px;
+    }}
+    QLabel[class="entityCardThumb-image"] {{
+        border-radius: {m.radius_md}px;
+    }}
+    QLabel[class="entityCardTitle"] {{
+        font-size: {m.font_size_base}px;
+        font-weight: 600;
+        color: {t.text_primary};
+    }}
+    QLabel[class="entityCardSubtitle"] {{
+        font-size: {m.font_size_sm}px;
+        color: {t.text_muted};
+    }}
+
+    /* --- Milestone 4B: plain (non-clickable) rows — Review Queue ------------ */
+    QFrame[class="reviewRow"] {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_md}px;
+    }}
+    QPushButton[class="danger"] {{
+        background: transparent;
+        border: 1px solid {t.danger};
+        color: {t.danger};
+        font-weight: 600;
+    }}
+    QPushButton[class="danger"]:hover {{ background: {t.danger}; color: {t.text_on_accent}; }}
+
+    /* --- Milestone 4B: dialogs / forms --------------------------------------- */
+    QDialog {{
+        background: {t.background};
+    }}
+    QLabel[class="dialogTitle"] {{
+        font-size: {m.font_size_lg}px;
+        font-weight: 700;
+        color: {t.text_primary};
+    }}
+    QLabel[class="formLabel"] {{
+        font-size: {m.font_size_sm}px;
+        font-weight: 600;
+        color: {t.text_secondary};
+    }}
+    QLabel[class="formError"] {{
+        color: {t.danger};
+        font-size: {m.font_size_sm}px;
+        font-weight: 500;
+    }}
+    QWidget#formDialogScroll, QScrollArea#formDialogScroll > QWidget {{
+        background: transparent;
+    }}
+
+    /* --- Milestone 4B: form inputs -------------------------------------------- */
+    QComboBox {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_sm}px;
+        padding: 6px 10px;
+        color: {t.text_primary};
+    }}
+    QComboBox:focus {{ border: 1px solid {t.accent}; }}
+    QComboBox::drop-down {{ border: none; width: 22px; }}
+    QComboBox QAbstractItemView {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_sm}px;
+        selection-background-color: {t.accent_soft};
+        selection-color: {t.text_primary};
+        outline: none;
+        padding: 4px;
+    }}
+    QTextEdit, QPlainTextEdit {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_sm}px;
+        padding: 6px 10px;
+        color: {t.text_primary};
+        selection-background-color: {t.accent};
+    }}
+    QTextEdit:focus, QPlainTextEdit:focus {{ border: 1px solid {t.accent}; }}
+    QSpinBox {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_sm}px;
+        padding: 4px 8px;
+        color: {t.text_primary};
+    }}
+    QSpinBox:focus {{ border: 1px solid {t.accent}; }}
+    QCheckBox {{
+        color: {t.text_primary};
+        spacing: 8px;
+    }}
+    QCheckBox::indicator {{
+        width: 16px;
+        height: 16px;
+        border: 1px solid {t.border};
+        border-radius: 4px;
+        background: {t.surface};
+    }}
+    QCheckBox::indicator:checked {{
+        background: {t.accent};
+        border: 1px solid {t.accent};
+    }}
     """
