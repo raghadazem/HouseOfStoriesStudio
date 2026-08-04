@@ -61,5 +61,14 @@ class ActionCard(ElevatedCard):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
+            # A quick "sink" using the hover-shadow animation this card
+            # already has (via ElevatedCard) — cheap, visible press
+            # feedback without introducing a second animation system.
+            self.animate_resting()
             self.clicked.emit()
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        if event.button() == Qt.MouseButton.LeftButton and self.underMouse():
+            self.animate_hover()
+        super().mouseReleaseEvent(event)

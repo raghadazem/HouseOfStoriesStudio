@@ -5,6 +5,11 @@ initial data load fails (e.g. the database has no tables yet) shows
 this embedded in the page instead of a blocking ``QMessageBox`` every
 time ``refresh()`` runs — the user can keep looking at the rest of the
 app and retry in place.
+
+v2 polish: the icon now sits in the same tinted circular chip
+:class:`~app.gui.widgets.empty_state.EmptyState` uses — one shared
+"nothing/something's wrong here" visual language across every page
+instead of a bare, differently-sized icon per state.
 """
 
 from __future__ import annotations
@@ -13,6 +18,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QLabel, QPushButton, QVBoxLayout, QWidget
 
 from app.gui.theme.tokens import METRICS
+
+_ICON_BADGE_SIZE = 64
 
 
 class ErrorState(QWidget):
@@ -36,14 +43,16 @@ class ErrorState(QWidget):
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
         icon_label = QLabel(icon)
+        icon_label.setProperty("class", "emptyStateIcon")
+        icon_label.setFixedSize(_ICON_BADGE_SIZE, _ICON_BADGE_SIZE)
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        icon_label.setStyleSheet(f"font-size: {METRICS.font_size_xl}px;")
-        layout.addWidget(icon_label)
+        layout.addWidget(icon_label, alignment=Qt.AlignmentFlag.AlignHCenter)
 
         self._message_label = QLabel(message)
-        self._message_label.setProperty("class", "muted")
+        self._message_label.setProperty("class", "emptyStateMessage")
         self._message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._message_label.setWordWrap(True)
+        self._message_label.setMaximumWidth(360)
         layout.addWidget(self._message_label)
 
         self._retry_button: QPushButton | None = None

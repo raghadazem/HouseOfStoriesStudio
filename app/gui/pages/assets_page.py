@@ -10,6 +10,7 @@ disk; nothing here shows a generated/fake preview.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -49,6 +50,7 @@ from app.gui.widgets import (
     ResponsiveGrid,
     SearchBox,
     StatusBadge,
+    ToolbarRow,
     show_error,
 )
 
@@ -82,7 +84,10 @@ def status_label(status: ApprovalStatus) -> str:
 
 class _ImportAssetDialog(FormDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("Import Asset", save_label="Import", parent=parent)
+        super().__init__(
+            "Import Asset", icon="📥", subtitle="Bring a file into managed storage",
+            save_label="Import", parent=parent,
+        )
         self.selected_path: Path | None = None
 
         file_row = QHBoxLayout()
@@ -174,12 +179,18 @@ class _AssetDetailDialog(FormDialog):
 
 class AssetsPage(QWidget):
     def __init__(
-        self, ctx: ApplicationContext, theme: ThemeManager, parent: QWidget | None = None
+        self,
+        ctx: ApplicationContext,
+        theme: ThemeManager,
+        parent: QWidget | None = None,
+        *,
+        on_feedback: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("assetsPage")
         self._ctx = ctx
         self._theme = theme
+        self._on_feedback = on_feedback
         self._assets: list[Asset] = []
         self._cards: list[tuple[Asset, EntityCard]] = []
 
@@ -206,33 +217,39 @@ class AssetsPage(QWidget):
         self._header.primary_action_triggered.connect(self._on_import_asset)
         layout.addWidget(self._header)
 
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(METRICS.spacing_sm)
+        toolbar = ToolbarRow()
         self._search = SearchBox("Search assets…")
         self._search.text_changed.connect(self._apply_filters)
-        toolbar.addWidget(self._search, stretch=1)
+        toolbar.add_widget(self._search, stretch=1)
 
         self._type_filter = QComboBox()
         self._type_filter.addItem("All types", _TYPE_ALL)
         for asset_type in AssetType:
             self._type_filter.addItem(type_label(asset_type), asset_type)
         self._type_filter.currentIndexChanged.connect(self._apply_filters)
-        toolbar.addWidget(self._type_filter)
+        toolbar.add_widget(self._type_filter)
 
         self._status_filter = QComboBox()
         self._status_filter.addItem("All statuses", _STATUS_ALL)
         for status in ApprovalStatus:
             self._status_filter.addItem(status_label(status), status)
         self._status_filter.currentIndexChanged.connect(self._apply_filters)
-        toolbar.addWidget(self._status_filter)
-        layout.addLayout(toolbar)
+        toolbar.add_widget(self._status_filter)
+        layout.addWidget(toolbar)
+
+        self._count_label = QLabel("")
+        self._count_label.setProperty("class", "resultCount")
+        layout.addWidget(self._count_label)
 
         self._grid = ResponsiveGrid(card_min_width=180)
         layout.addWidget(self._grid)
 
         self._empty_state = EmptyState(
-            "No assets yet — import a file or run an AI workflow to get started.", icon="🖼"
+            "No assets yet — import a file or run an AI workflow to get started.",
+            icon="🖼",
+            action_label="+ Import Asset",
         )
+        self._empty_state.action_triggered.connect(self._on_import_asset)
         layout.addWidget(self._empty_state)
 
         self._error_state = ErrorState("The database has no tables yet.")
@@ -312,11 +329,13 @@ class AssetsPage(QWidget):
 
         self._empty_state.setVisible(visible_count == 0 and not self._error_state.isVisible())
         if self._assets:
-            self._empty_state.set_message("No assets match your search or filters.")
+            self._empty_state.set_message("No assets match your search or filters.", show_action=False)
         else:
             self._empty_state.set_message(
                 "No assets yet — import a file or run an AI workflow to get started."
             )
+        self._count_label.setVisible(bool(self._assets))
+        self._count_label.setText(f"{visible_count} of {len(self._assets)} assets")
 
     # --- detail / import ----------------------------------------------------
 
@@ -345,3 +364,5 @@ class AssetsPage(QWidget):
             self._overlay.stop()
 
         self.refresh()
+        if self._on_feedback:
+            self._on_feedback("Asset imported.", "success")

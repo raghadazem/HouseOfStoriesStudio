@@ -13,6 +13,8 @@ service layer, since nothing previously turned "list the queue" into
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -41,6 +43,7 @@ from app.gui.widgets import (
     LoadingOverlay,
     PageHeader,
     SearchBox,
+    ToolbarRow,
     age_label,
     show_error,
 )
@@ -55,7 +58,7 @@ _TYPE_ICON = {
 
 class _RejectReasonDialog(FormDialog):
     def __init__(self, asset_name: str, parent: QWidget | None = None) -> None:
-        super().__init__(f"Reject {asset_name}", save_label="Reject", parent=parent)
+        super().__init__(f"Reject {asset_name}", icon="✕", save_label="Reject", parent=parent)
 
         self.reason_field = QTextEdit()
         self.reason_field.setPlaceholderText("What needs to change before this can be approved?")
@@ -75,12 +78,18 @@ class ReviewQueuePage(QWidget):
     review_count_updated = Signal(int)
 
     def __init__(
-        self, ctx: ApplicationContext, theme: ThemeManager, parent: QWidget | None = None
+        self,
+        ctx: ApplicationContext,
+        theme: ThemeManager,
+        parent: QWidget | None = None,
+        *,
+        on_feedback: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("reviewQueuePage")
         self._ctx = ctx
         self._theme = theme
+        self._on_feedback = on_feedback
         self._assets: list[Asset] = []
         self._rows: list[tuple[Asset, QFrame]] = []
 
@@ -104,18 +113,21 @@ class ReviewQueuePage(QWidget):
         self._header = PageHeader("Review Queue", "Assets awaiting your decision")
         layout.addWidget(self._header)
 
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(METRICS.spacing_sm)
+        toolbar = ToolbarRow()
         self._search = SearchBox("Search pending assets…")
         self._search.text_changed.connect(self._apply_filters)
-        toolbar.addWidget(self._search, stretch=1)
+        toolbar.add_widget(self._search, stretch=1)
 
         self._source_filter = QComboBox()
         self._source_filter.addItem("Every source", _SOURCE_ALL)
         self._source_filter.addItem("Manually imported", _SOURCE_MANUAL)
         self._source_filter.currentIndexChanged.connect(self._apply_filters)
-        toolbar.addWidget(self._source_filter)
-        layout.addLayout(toolbar)
+        toolbar.add_widget(self._source_filter)
+        layout.addWidget(toolbar)
+
+        self._count_label = QLabel("")
+        self._count_label.setProperty("class", "resultCount")
+        layout.addWidget(self._count_label)
 
         self._list_container = QVBoxLayout()
         self._list_container.setSpacing(METRICS.spacing_sm)
@@ -249,6 +261,8 @@ class ReviewQueuePage(QWidget):
             self._empty_state.set_message("No pending assets match your search.")
         else:
             self._empty_state.set_message("Nothing waiting — the queue is clear.")
+        self._count_label.setVisible(bool(self._assets))
+        self._count_label.setText(f"{visible_count} of {len(self._assets)} pending")
 
     # --- decisions -----------------------------------------------------------
 
@@ -268,6 +282,8 @@ class ReviewQueuePage(QWidget):
         finally:
             self._overlay.stop()
         self.refresh()
+        if self._on_feedback:
+            self._on_feedback(f"{asset.original_filename} approved.", "success")
 
     def _on_reject(self, asset: Asset) -> None:
         dialog = _RejectReasonDialog(asset.original_filename, parent=self)
@@ -289,3 +305,5 @@ class ReviewQueuePage(QWidget):
         finally:
             self._overlay.stop()
         self.refresh()
+        if self._on_feedback:
+            self._on_feedback(f"{asset.original_filename} rejected.", "info")

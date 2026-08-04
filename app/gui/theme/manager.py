@@ -326,16 +326,20 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         padding: 8px 14px;
         color: {t.text_primary};
     }}
-    QPushButton:hover {{ background: {t.surface_alt}; }}
+    QPushButton:hover {{ background: {t.surface_alt}; border: 1px solid {t.text_muted}; }}
     QPushButton:pressed {{ background: {t.border}; }}
+    QPushButton:focus {{ border: 1px solid {t.accent}; outline: none; }}
+    QPushButton:disabled {{ color: {t.text_muted}; background: {t.surface_alt}; border: 1px solid {t.border}; }}
     QPushButton[class="primary"] {{
         background: {t.accent};
         border: 1px solid {t.accent};
         color: {t.text_on_accent};
         font-weight: 600;
     }}
-    QPushButton[class="primary"]:hover {{ background: {t.accent_hover}; }}
-    QPushButton[class="primary"]:pressed {{ background: {t.accent_pressed}; }}
+    QPushButton[class="primary"]:hover {{ background: {t.accent_hover}; border: 1px solid {t.accent_hover}; }}
+    QPushButton[class="primary"]:pressed {{ background: {t.accent_pressed}; border: 1px solid {t.accent_pressed}; }}
+    QPushButton[class="primary"]:focus {{ border: 1px solid {t.text_on_accent}; }}
+    QPushButton[class="primary"]:disabled {{ background: {t.surface_alt}; border: 1px solid {t.border}; color: {t.text_muted}; }}
 
     /* --- Inputs ------------------------------------------------------------- */
     QLineEdit {{
@@ -346,7 +350,10 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         color: {t.text_primary};
         selection-background-color: {t.accent};
     }}
+    QLineEdit:hover {{ border: 1px solid {t.text_muted}; }}
     QLineEdit:focus {{ border: 1px solid {t.accent}; }}
+    QLineEdit:disabled {{ background: {t.surface_alt}; color: {t.text_muted}; }}
+    QLineEdit:read-only {{ background: {t.surface_alt}; }}
 
     /* --- Status badge ------------------------------------------------------- */
     QLabel[class="badge-success"], QLabel[class="badge-warning"],
@@ -433,6 +440,10 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         border: 1px solid {t.accent};
         outline: none;
     }}
+    QPushButton[class="entityRow"]:pressed {{
+        border: 1px solid {t.accent};
+        background: {t.border};
+    }}
     QLabel[class="entityRowTitle"] {{
         font-size: {m.font_size_base}px;
         font-weight: 600;
@@ -458,6 +469,10 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
     QPushButton[class="entityCard"]:focus {{
         border: 1px solid {t.accent};
         outline: none;
+    }}
+    QPushButton[class="entityCard"]:pressed {{
+        border: 1px solid {t.accent};
+        background: {t.border};
     }}
     QLabel[class="entityCardThumb"] {{
         background: {t.accent_soft};
@@ -522,7 +537,9 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         padding: 6px 10px;
         color: {t.text_primary};
     }}
+    QComboBox:hover {{ border: 1px solid {t.text_muted}; }}
     QComboBox:focus {{ border: 1px solid {t.accent}; }}
+    QComboBox:disabled {{ background: {t.surface_alt}; color: {t.text_muted}; }}
     QComboBox::drop-down {{ border: none; width: 22px; }}
     QComboBox QAbstractItemView {{
         background: {t.surface};
@@ -541,7 +558,9 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         color: {t.text_primary};
         selection-background-color: {t.accent};
     }}
+    QTextEdit:hover, QPlainTextEdit:hover {{ border: 1px solid {t.text_muted}; }}
     QTextEdit:focus, QPlainTextEdit:focus {{ border: 1px solid {t.accent}; }}
+    QTextEdit:disabled, QPlainTextEdit:disabled {{ background: {t.surface_alt}; color: {t.text_muted}; }}
     QSpinBox {{
         background: {t.surface};
         border: 1px solid {t.border};
@@ -549,6 +568,7 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         padding: 4px 8px;
         color: {t.text_primary};
     }}
+    QSpinBox:hover {{ border: 1px solid {t.text_muted}; }}
     QSpinBox:focus {{ border: 1px solid {t.accent}; }}
     QCheckBox {{
         color: {t.text_primary};
@@ -561,8 +581,75 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         border-radius: 4px;
         background: {t.surface};
     }}
+    QCheckBox::indicator:hover {{ border: 1px solid {t.accent}; }}
     QCheckBox::indicator:checked {{
         background: {t.accent};
         border: 1px solid {t.accent};
+    }}
+
+    /* --- Scrollbar hover/pressed feedback ------------------------------------ */
+    QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover {{ background: {t.text_muted}; }}
+    QScrollBar::handle:vertical:pressed, QScrollBar::handle:horizontal:pressed {{ background: {t.accent}; }}
+
+    /* --- Polish pass: empty states -------------------------------------------- */
+    QLabel[class="emptyStateIcon"] {{
+        background: {t.accent_soft};
+        border-radius: 32px;
+        font-size: 26px;
+    }}
+    QLabel[class="emptyStateMessage"] {{
+        color: {t.text_secondary};
+        font-size: {m.font_size_base}px;
+    }}
+
+    /* --- Polish pass: dialog header -------------------------------------------- */
+    QFrame#formDialogShell {{
+        background: transparent;
+        border-top: 3px solid {t.accent};
+        border-top-left-radius: {m.radius_sm}px;
+        border-top-right-radius: {m.radius_sm}px;
+    }}
+    QLabel[class="dialogSubtitle"] {{
+        font-size: {m.font_size_sm}px;
+        color: {t.text_muted};
+    }}
+    QFrame[class="dialogDivider"] {{
+        background: {t.border};
+        max-height: 1px;
+        min-height: 1px;
+    }}
+
+    /* --- Polish pass: toast notifications --------------------------------------- */
+    QFrame[class^="toast-"] {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_md}px;
+    }}
+    QFrame[class="toast-success"] {{ border-left: 3px solid {t.success}; }}
+    QFrame[class="toast-warning"] {{ border-left: 3px solid {t.warning}; }}
+    QFrame[class="toast-danger"]  {{ border-left: 3px solid {t.danger}; }}
+    QFrame[class="toast-info"]    {{ border-left: 3px solid {t.info}; }}
+    QLabel[class="toastIcon-success"] {{ background: {t.success}; color: {t.text_on_accent}; border-radius: 11px; font-weight: 700; }}
+    QLabel[class="toastIcon-warning"] {{ background: {t.warning}; color: {t.text_on_accent}; border-radius: 11px; font-weight: 700; }}
+    QLabel[class="toastIcon-danger"]  {{ background: {t.danger};  color: {t.text_on_accent}; border-radius: 11px; font-weight: 700; }}
+    QLabel[class="toastIcon-info"]    {{ background: {t.info};    color: {t.text_on_accent}; border-radius: 11px; font-weight: 700; }}
+    QLabel[class="toastMessage"] {{
+        color: {t.text_primary};
+        font-size: {m.font_size_sm}px;
+    }}
+    QPushButton[class="toastClose"] {{
+        background: transparent;
+        border: none;
+        border-radius: 10px;
+        color: {t.text_muted};
+        padding: 0px;
+        font-size: {m.font_size_sm}px;
+    }}
+    QPushButton[class="toastClose"]:hover {{ background: {t.surface_alt}; color: {t.text_primary}; }}
+
+    /* --- Polish pass: result counts / toolbars ---------------------------------- */
+    QLabel[class="resultCount"] {{
+        color: {t.text_muted};
+        font-size: {m.font_size_sm}px;
     }}
     """

@@ -11,6 +11,8 @@ big enough workflow of its own to stay out of this pass's scope (see
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -42,6 +44,7 @@ from app.gui.widgets import (
     ResponsiveGrid,
     SearchBox,
     StatusBadge,
+    ToolbarRow,
     show_error,
 )
 
@@ -59,7 +62,10 @@ _VERSION_STATUS_VARIANT = {
 
 class _CreateCharacterDialog(FormDialog):
     def __init__(self, existing_slugs: set[str], parent: QWidget | None = None) -> None:
-        super().__init__("New Character", save_label="Create", parent=parent)
+        super().__init__(
+            "New Character", icon="🧒", subtitle="Add them to the studio's roster",
+            save_label="Create", parent=parent,
+        )
         self._existing_slugs = existing_slugs
 
         self.name_en_field = QLineEdit()
@@ -163,12 +169,18 @@ class _CharacterDetailDialog(FormDialog):
 
 class CharactersPage(QWidget):
     def __init__(
-        self, ctx: ApplicationContext, theme: ThemeManager, parent: QWidget | None = None
+        self,
+        ctx: ApplicationContext,
+        theme: ThemeManager,
+        parent: QWidget | None = None,
+        *,
+        on_feedback: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("charactersPage")
         self._ctx = ctx
         self._theme = theme
+        self._on_feedback = on_feedback
         self._characters: list[Character] = []
         self._cards: list[tuple[Character, EntityCard]] = []
 
@@ -195,26 +207,32 @@ class CharactersPage(QWidget):
         self._header.primary_action_triggered.connect(self._on_create_character)
         layout.addWidget(self._header)
 
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(METRICS.spacing_sm)
+        toolbar = ToolbarRow()
         self._search = SearchBox("Search characters…")
         self._search.text_changed.connect(self._apply_filters)
-        toolbar.addWidget(self._search, stretch=1)
+        toolbar.add_widget(self._search, stretch=1)
 
         self._lock_filter = QComboBox()
         self._lock_filter.addItem("All characters", _LOCK_ALL)
         self._lock_filter.addItem("Locked", _LOCK_LOCKED)
         self._lock_filter.addItem("Not locked", _LOCK_UNLOCKED)
         self._lock_filter.currentIndexChanged.connect(self._apply_filters)
-        toolbar.addWidget(self._lock_filter)
-        layout.addLayout(toolbar)
+        toolbar.add_widget(self._lock_filter)
+        layout.addWidget(toolbar)
+
+        self._count_label = QLabel("")
+        self._count_label.setProperty("class", "resultCount")
+        layout.addWidget(self._count_label)
 
         self._grid = ResponsiveGrid(card_min_width=180)
         layout.addWidget(self._grid)
 
         self._empty_state = EmptyState(
-            "No characters yet — add the first one to start building your cast.", icon="🧒"
+            "No characters yet — add the first one to start building your cast.",
+            icon="🧒",
+            action_label="+ New Character",
         )
+        self._empty_state.action_triggered.connect(self._on_create_character)
         layout.addWidget(self._empty_state)
 
         self._error_state = ErrorState("The database has no tables yet.")
@@ -292,11 +310,13 @@ class CharactersPage(QWidget):
 
         self._empty_state.setVisible(visible_count == 0 and not self._error_state.isVisible())
         if self._characters:
-            self._empty_state.set_message("No characters match your search.")
+            self._empty_state.set_message("No characters match your search.", show_action=False)
         else:
             self._empty_state.set_message(
                 "No characters yet — add the first one to start building your cast."
             )
+        self._count_label.setVisible(bool(self._characters))
+        self._count_label.setText(f"{visible_count} of {len(self._characters)} characters")
 
     # --- detail / create ----------------------------------------------------
 
@@ -331,3 +351,5 @@ class CharactersPage(QWidget):
             self._overlay.stop()
 
         self.refresh()
+        if self._on_feedback:
+            self._on_feedback(f"{fields['name_en']} added to the roster.", "success")

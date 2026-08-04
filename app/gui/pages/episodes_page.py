@@ -9,6 +9,8 @@ as ``DashboardPage``.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
@@ -41,6 +43,7 @@ from app.gui.widgets import (
     PageHeader,
     SearchBox,
     StatusBadge,
+    ToolbarRow,
     show_error,
 )
 
@@ -67,7 +70,10 @@ class _CreateEpisodeDialog(FormDialog):
     person can fill in thirty seconds rather than a full metadata editor."""
 
     def __init__(self, existing_numbers: set[int], parent: QWidget | None = None) -> None:
-        super().__init__("New Episode", save_label="Create", parent=parent)
+        super().__init__(
+            "New Episode", icon="🎬", subtitle="Add it to the production pipeline",
+            save_label="Create", parent=parent,
+        )
         self._existing_numbers = existing_numbers
 
         self.number_field = QSpinBox()
@@ -180,11 +186,14 @@ class EpisodesPage(QWidget):
         ctx: ApplicationContext,
         theme: ThemeManager,
         parent: QWidget | None = None,
+        *,
+        on_feedback: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("episodesPage")
         self._ctx = ctx
         self._theme = theme
+        self._on_feedback = on_feedback
         self._episodes: list[Episode] = []
         self._rows: list[tuple[Episode, EntityRow]] = []
 
@@ -211,27 +220,33 @@ class EpisodesPage(QWidget):
         self._header.primary_action_triggered.connect(self._on_create_episode)
         layout.addWidget(self._header)
 
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(METRICS.spacing_sm)
+        toolbar = ToolbarRow()
         self._search = SearchBox("Search episodes…")
         self._search.text_changed.connect(self._apply_filters)
-        toolbar.addWidget(self._search, stretch=1)
+        toolbar.add_widget(self._search, stretch=1)
 
         self._stage_filter = QComboBox()
         self._stage_filter.addItem("All stages", _STAGE_ALL)
         for stage in PipelineStage:
             self._stage_filter.addItem(stage_label(stage), stage)
         self._stage_filter.currentIndexChanged.connect(self._apply_filters)
-        toolbar.addWidget(self._stage_filter)
-        layout.addLayout(toolbar)
+        toolbar.add_widget(self._stage_filter)
+        layout.addWidget(toolbar)
+
+        self._count_label = QLabel("")
+        self._count_label.setProperty("class", "resultCount")
+        layout.addWidget(self._count_label)
 
         self._list_container = QVBoxLayout()
         self._list_container.setSpacing(METRICS.spacing_sm)
         layout.addLayout(self._list_container)
 
         self._empty_state = EmptyState(
-            "No episodes yet — create the first one to get production moving.", icon="🎬"
+            "No episodes yet — create the first one to get production moving.",
+            icon="🎬",
+            action_label="+ New Episode",
         )
+        self._empty_state.action_triggered.connect(self._on_create_episode)
         layout.addWidget(self._empty_state)
 
         self._error_state = ErrorState("The database has no tables yet.")
@@ -315,11 +330,13 @@ class EpisodesPage(QWidget):
 
         self._empty_state.setVisible(visible_count == 0 and not self._error_state.isVisible())
         if visible_count == 0 and self._episodes:
-            self._empty_state.set_message("No episodes match your search.")
+            self._empty_state.set_message("No episodes match your search.", show_action=False)
         else:
             self._empty_state.set_message(
                 "No episodes yet — create the first one to get production moving."
             )
+        self._count_label.setVisible(bool(self._episodes))
+        self._count_label.setText(f"{visible_count} of {len(self._episodes)} episodes")
 
     # --- detail / create ----------------------------------------------------
 
@@ -365,3 +382,5 @@ class EpisodesPage(QWidget):
             self._overlay.stop()
 
         self.refresh()
+        if self._on_feedback:
+            self._on_feedback(f"Episode #{fields['number']} created.", "success")

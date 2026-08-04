@@ -10,11 +10,14 @@ unscoped prompt) rather than re-exposing every possible association.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QScrollArea,
     QTextEdit,
@@ -38,6 +41,7 @@ from app.gui.widgets import (
     PageHeader,
     SearchBox,
     StatusBadge,
+    ToolbarRow,
     show_error,
 )
 
@@ -68,7 +72,10 @@ def type_label(prompt_type: PromptType) -> str:
 
 class _CreatePromptDialog(FormDialog):
     def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__("New Prompt Template", save_label="Create", parent=parent)
+        super().__init__(
+            "New Prompt Template", icon="✍️", subtitle="Reusable across episodes and characters",
+            save_label="Create", parent=parent,
+        )
 
         self.name_field = QLineEdit()
         self.name_field.setPlaceholderText("dashboard_quick_thumbnail")
@@ -143,12 +150,18 @@ class _PromptDetailDialog(FormDialog):
 
 class PromptsPage(QWidget):
     def __init__(
-        self, ctx: ApplicationContext, theme: ThemeManager, parent: QWidget | None = None
+        self,
+        ctx: ApplicationContext,
+        theme: ThemeManager,
+        parent: QWidget | None = None,
+        *,
+        on_feedback: Callable[[str, str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self.setObjectName("promptsPage")
         self._ctx = ctx
         self._theme = theme
+        self._on_feedback = on_feedback
         self._templates: list[PromptTemplate] = []
         self._rows: list[tuple[PromptTemplate, EntityRow]] = []
 
@@ -175,27 +188,33 @@ class PromptsPage(QWidget):
         self._header.primary_action_triggered.connect(self._on_create_prompt)
         layout.addWidget(self._header)
 
-        toolbar = QHBoxLayout()
-        toolbar.setSpacing(METRICS.spacing_sm)
+        toolbar = ToolbarRow()
         self._search = SearchBox("Search prompts…")
         self._search.text_changed.connect(self._apply_filters)
-        toolbar.addWidget(self._search, stretch=1)
+        toolbar.add_widget(self._search, stretch=1)
 
         self._category_filter = QComboBox()
         self._category_filter.addItem("All categories", _CATEGORY_ALL)
         for category in PromptCategory:
             self._category_filter.addItem(category_label(category), category)
         self._category_filter.currentIndexChanged.connect(self._apply_filters)
-        toolbar.addWidget(self._category_filter)
-        layout.addLayout(toolbar)
+        toolbar.add_widget(self._category_filter)
+        layout.addWidget(toolbar)
+
+        self._count_label = QLabel("")
+        self._count_label.setProperty("class", "resultCount")
+        layout.addWidget(self._count_label)
 
         self._list_container = QVBoxLayout()
         self._list_container.setSpacing(METRICS.spacing_sm)
         layout.addLayout(self._list_container)
 
         self._empty_state = EmptyState(
-            "No prompt templates yet — create the first one for your production pipeline.", icon="✍️"
+            "No prompt templates yet — create the first one for your production pipeline.",
+            icon="✍️",
+            action_label="+ New Prompt",
         )
+        self._empty_state.action_triggered.connect(self._on_create_prompt)
         layout.addWidget(self._empty_state)
 
         self._error_state = ErrorState("The database has no tables yet.")
@@ -271,11 +290,13 @@ class PromptsPage(QWidget):
 
         self._empty_state.setVisible(visible_count == 0 and not self._error_state.isVisible())
         if self._templates:
-            self._empty_state.set_message("No prompts match your search.")
+            self._empty_state.set_message("No prompts match your search.", show_action=False)
         else:
             self._empty_state.set_message(
                 "No prompt templates yet — create the first one for your production pipeline."
             )
+        self._count_label.setVisible(bool(self._templates))
+        self._count_label.setText(f"{visible_count} of {len(self._templates)} prompts")
 
     # --- detail / create ----------------------------------------------------
 
@@ -303,3 +324,5 @@ class PromptsPage(QWidget):
             self._overlay.stop()
 
         self.refresh()
+        if self._on_feedback:
+            self._on_feedback(f"Prompt template '{fields['name']}' created.", "success")

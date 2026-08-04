@@ -33,6 +33,8 @@ from app.gui.widgets.search_box import SearchBox
 from app.gui.widgets.section_header import SectionHeader
 from app.gui.widgets.status_badge import StatusBadge
 from app.gui.widgets.summary_card import SummaryCard
+from app.gui.widgets.toast import Toast, ToastHost
+from app.gui.widgets.toolbar_row import ToolbarRow
 
 __all__ = [
     "ActionCard",
@@ -55,6 +57,9 @@ __all__ = [
     "SectionHeader",
     "StatusBadge",
     "SummaryCard",
+    "Toast",
+    "ToastHost",
+    "ToolbarRow",
     "age_label",
     "confirm",
     "parse_log_line",

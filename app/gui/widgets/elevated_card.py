@@ -44,12 +44,22 @@ class ElevatedCard(QFrame):
         self._offset_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def enterEvent(self, event) -> None:
-        self._animate_to(_HOVER_BLUR, _HOVER_OFFSET)
+        self.animate_hover()
         super().enterEvent(event)
 
     def leaveEvent(self, event) -> None:
-        self._animate_to(_RESTING_BLUR, _RESTING_OFFSET)
+        self.animate_resting()
         super().leaveEvent(event)
+
+    def animate_hover(self) -> None:
+        """Lift to the hover elevation. Exposed for subclasses (e.g. ``ActionCard``'s
+        press/release feedback) that need to trigger the same motion outside of a
+        real mouse enter/leave — see that module for why."""
+        self._animate_to(_HOVER_BLUR, _HOVER_OFFSET)
+
+    def animate_resting(self) -> None:
+        """Settle back to the resting (no-shadow) elevation. See :meth:`animate_hover`."""
+        self._animate_to(_RESTING_BLUR, _RESTING_OFFSET)
 
     def _animate_to(self, blur: float, offset: float) -> None:
         self._blur_anim.stop()

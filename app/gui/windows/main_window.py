@@ -25,8 +25,12 @@ from app.gui.pages.review_queue_page import ReviewQueuePage
 from app.gui.pages.settings_page import SettingsPage
 from app.gui.settings import AppSettings
 from app.gui.theme.manager import ThemeManager
+from app.gui.theme.tokens import METRICS
+from app.gui.widgets.toast import ToastHost, Variant
 from app.gui.windows.sidebar import NAV_ITEMS, Sidebar
 from app.gui.windows.top_bar import APP_TITLE, TopBar
+
+_MIN_WINDOW_SIZE = (640, 480)
 
 
 class MainWindow(QMainWindow):
@@ -46,6 +50,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle(APP_TITLE)
         self.resize(1440, 900)
+        self.setMinimumSize(*_MIN_WINDOW_SIZE)
 
         self._build_layout()
         self._build_status_bar()
@@ -89,11 +94,11 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
         self.dashboard_page = DashboardPage(self._ctx, self._theme, self)
-        self.episodes_page = EpisodesPage(self._ctx, self._theme, self)
-        self.characters_page = CharactersPage(self._ctx, self._theme, self)
-        self.assets_page = AssetsPage(self._ctx, self._theme, self)
-        self.prompts_page = PromptsPage(self._ctx, self._theme, self)
-        self.review_queue_page = ReviewQueuePage(self._ctx, self._theme, self)
+        self.episodes_page = EpisodesPage(self._ctx, self._theme, self, on_feedback=self.show_toast)
+        self.characters_page = CharactersPage(self._ctx, self._theme, self, on_feedback=self.show_toast)
+        self.assets_page = AssetsPage(self._ctx, self._theme, self, on_feedback=self.show_toast)
+        self.prompts_page = PromptsPage(self._ctx, self._theme, self, on_feedback=self.show_toast)
+        self.review_queue_page = ReviewQueuePage(self._ctx, self._theme, self, on_feedback=self.show_toast)
         self.settings_page = SettingsPage(self._ctx, self._theme, self._settings, self)
         self._add_page("dashboard", self.dashboard_page)
         self._add_page("episodes", self.episodes_page)
@@ -106,6 +111,12 @@ class MainWindow(QMainWindow):
 
         outer.addLayout(body, stretch=1)
         self.setCentralWidget(central)
+
+        # Anchored to the whole window (not just the page stack) so a
+        # toast stays visible across navigation instead of disappearing
+        # with the page that triggered it; offset below the top bar so
+        # it never covers the branding/theme toggle.
+        self._toast_host = ToastHost(self, top_offset=METRICS.topbar_height)
 
     def _add_page(self, key: str, page: QWidget) -> None:
         self._pages[key] = page
@@ -134,6 +145,12 @@ class MainWindow(QMainWindow):
 
     def set_state(self, text: str) -> None:
         self._status_state.setText(text)
+
+    def show_toast(self, message: str, variant: Variant = "success") -> None:
+        """Passed to every page as ``on_feedback`` — a non-blocking confirmation
+        after a successful create/approve/reject, where a page previously gave
+        the user nothing but a silent list refresh."""
+        self._toast_host.show_toast(message, variant)
 
     # --- signals -------------------------------------------------------------
 
