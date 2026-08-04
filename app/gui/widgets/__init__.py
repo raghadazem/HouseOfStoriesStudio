@@ -19,6 +19,7 @@ from app.gui.widgets.dialogs import (
 from app.gui.widgets.elevated_card import ElevatedCard
 from app.gui.widgets.empty_state import EmptyState
 from app.gui.widgets.loading import LoadingOverlay, LoadingSpinner
+from app.gui.widgets.nav_icon import render_nav_icon
 from app.gui.widgets.placeholder_page import PlaceholderPage
 from app.gui.widgets.progress_stepper import ProgressStepper
 from app.gui.widgets.search_box import SearchBox
@@ -43,6 +44,7 @@ __all__ = [
     "SummaryCard",
     "confirm",
     "parse_log_line",
+    "render_nav_icon",
     "show_error",
     "show_info",
     "show_not_implemented",

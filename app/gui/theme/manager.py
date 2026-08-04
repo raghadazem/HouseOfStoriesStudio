@@ -97,6 +97,38 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         background: {t.surface_alt};
         color: {t.text_primary};
     }}
+    QLabel[class="episodeChip"] {{
+        color: {t.text_secondary};
+        font-size: {m.font_size_base}px;
+        font-weight: 500;
+    }}
+    QToolButton[class="diagnosticsToggle"] {{
+        background: transparent;
+        border: 1px solid {t.border};
+        border-radius: {m.radius_sm}px;
+        padding: 4px 10px;
+        color: {t.text_muted};
+        font-size: {m.font_size_sm}px;
+    }}
+    QToolButton[class="diagnosticsToggle"]:hover {{
+        background: {t.surface_alt};
+        color: {t.text_secondary};
+    }}
+    QFrame#diagnosticsPopover {{
+        background: {t.surface};
+        border: 1px solid {t.border};
+        border-radius: {m.radius_md}px;
+    }}
+    QLabel[class="diagnosticsLabel"] {{
+        color: {t.text_muted};
+        font-size: {m.font_size_xs}px;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }}
+    QLabel[class="diagnosticsValue"] {{
+        color: {t.text_secondary};
+        font-size: {m.font_size_sm}px;
+    }}
 
     /* --- Sidebar -------------------------------------------------------- */
     QWidget#sidebar {{
@@ -105,7 +137,7 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
     }}
     QPushButton[class="sidebarButton"] {{
         text-align: left;
-        padding: 10px 16px;
+        padding: 10px 14px 10px 18px;
         border: none;
         border-radius: {m.radius_sm}px;
         color: {t.sidebar_text};
@@ -122,9 +154,28 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
     }}
     QLabel#sidebarSectionLabel {{
         color: {t.sidebar_text_muted};
-        font-size: {m.font_size_sm}px;
-        padding: 12px 16px 4px 16px;
-        letter-spacing: 1px;
+        font-size: {m.font_size_xs}px;
+        padding: 14px 18px 4px 18px;
+        letter-spacing: 1.2px;
+        font-weight: 600;
+    }}
+    QFrame[class="sidebarSeparator"] {{
+        background: rgba(255, 255, 255, 0.08);
+        max-height: 1px;
+        min-height: 1px;
+        margin: 8px 18px;
+    }}
+    QFrame#sidebarIndicator {{
+        background: {t.accent};
+        border-radius: 2px;
+    }}
+    QLabel[class="sidebarBadge"] {{
+        background: {t.danger};
+        color: {t.text_on_accent};
+        border-radius: 9px;
+        font-size: {m.font_size_xs}px;
+        font-weight: 700;
+        padding: 0px 5px;
     }}
 
     /* --- Cards / surfaces ------------------------------------------------ */
@@ -133,10 +184,16 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         border: 1px solid {t.border};
         border-radius: {m.radius_lg}px;
     }}
+    QFrame[class="card-hero"] {{
+        background: {t.surface};
+        border: 1px solid {t.accent};
+        border-radius: {m.radius_lg}px;
+    }}
     QLabel[class="sectionTitle"] {{
         font-size: {m.font_size_lg}px;
-        font-weight: 600;
+        font-weight: 700;
         color: {t.text_primary};
+        letter-spacing: -0.2px;
     }}
     QLabel[class="sectionSubtitle"] {{
         font-size: {m.font_size_base}px;
@@ -144,6 +201,7 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
     }}
     QLabel[class="cardTitle"] {{
         font-size: {m.font_size_base}px;
+        font-weight: 500;
         color: {t.text_secondary};
     }}
     QLabel[class="cardValue"] {{
@@ -151,13 +209,30 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
         font-weight: 700;
         color: {t.text_primary};
     }}
+    QLabel[class="cardValue-hero"] {{
+        font-size: {m.font_size_xxl}px;
+        font-weight: 800;
+        color: {t.text_primary};
+        letter-spacing: -0.5px;
+    }}
+    QLabel[class="cardCaption"] {{
+        font-size: {m.font_size_sm}px;
+        font-weight: 500;
+        color: {t.accent};
+    }}
     QLabel[class="muted"] {{
         color: {t.text_muted};
+        font-size: {m.font_size_base}px;
     }}
     QLabel[class="iconChip"] {{
         background: {t.accent_soft};
         border-radius: 12px;
         font-size: {m.font_size_lg}px;
+    }}
+    QLabel[class="iconChip-hero"] {{
+        background: {t.accent_soft};
+        border-radius: 14px;
+        font-size: {m.font_size_xl}px;
     }}
 
     /* --- Card progress bar (SummaryCard) ------------------------------------ */
@@ -179,35 +254,40 @@ def _build_stylesheet(t: ThemeTokens, m: Metrics) -> str:
     }}
     QFrame[class="actionCard"]:hover {{
         border: 1px solid {t.accent};
-    }}
-    QLabel[class="actionCardIcon"] {{
-        font-size: {m.font_size_xl}px;
+        background: {t.accent_soft};
     }}
     QLabel[class="actionCardTitle"] {{
         font-size: {m.font_size_base}px;
         font-weight: 600;
         color: {t.text_primary};
     }}
+    QLabel[class="actionCardDescription"] {{
+        font-size: {m.font_size_sm}px;
+        color: {t.text_muted};
+    }}
 
     /* --- Production progress stepper --------------------------------------- */
     QLabel[class="stepDot-done"] {{
         background: {t.success};
         color: {t.text_on_accent};
-        border-radius: 15px;
+        border-radius: 16px;
         font-weight: 700;
+        font-size: {m.font_size_md}px;
     }}
     QLabel[class="stepDot-current"] {{
         background: {t.accent};
         color: {t.text_on_accent};
-        border-radius: 15px;
+        border-radius: 16px;
         font-weight: 700;
+        font-size: {m.font_size_md}px;
         border: 2px solid {t.accent_hover};
     }}
     QLabel[class="stepDot-upcoming"] {{
         background: {t.surface_alt};
         color: {t.text_muted};
-        border-radius: 15px;
+        border-radius: 16px;
         font-weight: 600;
+        font-size: {m.font_size_md}px;
         border: 1px solid {t.border};
     }}
     QLabel[class="stepLabel-done"], QLabel[class="stepLabel-current"] {{

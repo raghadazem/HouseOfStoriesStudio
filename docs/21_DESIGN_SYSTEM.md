@@ -1,6 +1,6 @@
 # 21 — Design System
 
-**Milestone:** 4A — Application Shell (updated by the UI/UX polish pass, `docs/23_UI_UX_POLISH_STATUS.md`)
+**Milestone:** 4A — Application Shell (updated by the UI/UX polish pass, `docs/23_UI_UX_POLISH_STATUS.md`, and the v2 polish pass, `docs/24_UI_UX_POLISH_V2_STATUS.md`)
 **Package:** `app/gui/theme/`, `app/gui/widgets/`
 
 ---
@@ -22,7 +22,7 @@ A modern creative-production tool — closer to Notion/Figma/Canva Desktop than 
 | `sidebar_background` / `sidebar_text` / `sidebar_text_muted` / `sidebar_selected_background` / `sidebar_selected_text` | The sidebar is deliberately a separate (darker) surface from the main content area in both themes, like Notion/Figma's side rail |
 | `overlay` / `shadow` | `LoadingOverlay`'s scrim; reserved for future drop-shadow use |
 
-`Metrics` (also in `tokens.py`) holds every spacing/radius/font-size value, shared by both themes — only *color* differs between light and dark, never spacing or type scale.
+`Metrics` (also in `tokens.py`) holds every spacing/radius/font-size value, shared by both themes — only *color* differs between light and dark, never spacing or type scale. The v2 polish pass added `font_size_xs` (10px — sidebar section labels, diagnostics captions) and `font_size_xxl` (36px — the two "hero" summary cards' value) to widen the type scale for the deeper hierarchy described in `docs/24_UI_UX_POLISH_V2_STATUS.md` §7, and bumped `sidebar_width` 232→240 to fit the wider grouped layout.
 
 ## 3. How Tokens Become Pixels: `ThemeManager`
 
@@ -48,18 +48,23 @@ A QSS selector only applies to a widget that actually matches it — a plain `QW
 | Widget | What it's for | Key API |
 |---|---|---|
 | `ElevatedCard` | Base class for every card: `class="card"` QSS + animated hover elevation (see above) | subclass it; `_animate_to(blur, offset)` if you need to trigger it manually |
-| `SummaryCard` | One dashboard metric: icon chip, title, big value, optional progress bar, optional subtitle/badge. Extends `ElevatedCard`. | `set_value(str)`, `set_subtitle(str)`, `set_badge(text, variant)`, `set_progress(ratio: float)` |
-| `ActionCard` | One clickable "production shortcut": icon, title, optional description. Extends `ElevatedCard`. | `clicked` signal |
-| `ProgressStepper` | A horizontal done/current/upcoming stage indicator. Purely presentational — no domain knowledge. | `set_progress(steps: list[str], current_index: int \| None)` |
+| `SummaryCard` | One dashboard metric: icon chip, title, big value, optional caption/progress bar/subtitle/badge, optional `hero` variant (bigger icon/value, spans more grid columns). Extends `ElevatedCard`. | `set_value(str)`, `set_value_animated(int)` (count-up), `set_caption(str)` (a real secondary metric — never a fabricated trend, see `docs/24` §1), `set_subtitle(str)`, `set_badge(text, variant)`, `set_progress(ratio: float)` |
+| `ActionCard` | One clickable "production shortcut": icon (shares `SummaryCard`'s `iconChip` styling), title, optional description. Extends `ElevatedCard`. Minimum height 128px for a larger click target. | `clicked` signal |
+| `ProgressStepper` | A horizontal done/current/upcoming stage indicator, each step with its own icon and the current step pulsing via a looping `QGraphicsDropShadowEffect` animation. Purely presentational — no domain knowledge. | `set_progress(steps: list[str], current_index: int \| None, icons: list[str] \| None = None)` |
 | `ActivityTimeline` | Icon + friendly title + relative-time rows, built from parsed log lines | `set_entries(list[ActivityEntry])`, `entries` (read-only); module-level `parse_log_line(line)`/`format_relative_time(dt)` |
 | `AppLogo` | The custom-painted brand mark (see §7 of `docs/23`) | constructor only: `theme`, `size` |
-| `SectionHeader` | A page/section title + optional subtitle + optional trailing widget (e.g. a button) | `set_title`, `set_subtitle` |
+| `render_nav_icon` | A small custom vector icon set (`app/gui/widgets/nav_icon.py`) for the 7 sidebar items — renders to a `QIcon` (not a live widget) specifically so `Sidebar` keeps plain, keyboard-accessible `QPushButton`s. See `docs/24` §8 for why this scope (sidebar only) was chosen over a full icon set. | `render_nav_icon(glyph: str, color: QColor \| str, size: int = 18) -> QIcon`; `GLYPHS` for the valid glyph names |
+| `SectionHeader` | A page/section title + optional subtitle + optional trailing widget (e.g. a button or `StatusBadge`) | `set_title`, `set_subtitle` |
 | `StatusBadge` | A small colored pill (`success`/`warning`/`danger`/`info`/`neutral`) | `set_text`, `set_variant` |
 | `SearchBox` | A labeled search input with a leading icon | `text()`, `clear()`, `return_pressed` signal — not wired to any real search yet (no list screen exists in 4A to search) |
 | `PlaceholderPage` | A full-page "not built yet" screen | constructor only: `title`, `message`, `icon` |
 | `EmptyState` | A small "nothing here" block embedded inside a card/panel (smaller than `PlaceholderPage`) | `set_message` |
 | `LoadingSpinner` / `LoadingOverlay` | A rotating-arc spinner and a full-cover semi-transparent scrim+spinner+message | `start()`, `stop()`, `set_message` |
 | `dialogs.show_info/show_warning/show_error/confirm/show_not_implemented` | The only way any page shows a message dialog | plain functions, not classes |
+
+### Floating/overlay widgets must be real top-level windows, not clipped children
+
+`TopBar`'s diagnostics popover (`docs/24` §4) is a `QFrame` that needs to render outside its parent's bounds — `TopBar` is only `topbar_height` tall, and Qt clips a plain child widget's painting to its parent's rectangle. The fix: give the popover real window flags (`Qt.WindowType.Tool | Qt.WindowType.FramelessWindowHint`, `WA_TranslucentBackground` for the rounded corners) so it becomes its own top-level window instead of a clipped child — positioned with `mapToGlobal`, not `mapTo(parent, ...)`. Any future floating/overlay widget that needs to draw beyond its logical parent's bounds (a dropdown, a tooltip-like panel) should follow the same pattern rather than being added as a plain child.
 
 Nothing here is used speculatively without a real call site: `LoadingOverlay` is wired into `DashboardPage`'s "Run Mock AI" quick action (a real, if brief, async-feeling operation); `EmptyState` backs every summary card's zero-data subtitle text, the Production Progress panel's no-episode state, and the Recent Activity panel; `dialogs.show_not_implemented` backs `Create Episode`/`Import Asset`/every placeholder sidebar page; `ProgressStepper`/`ActivityTimeline` are both driven by real data the Dashboard already reads (`Episode.pipeline_stage`, `data/logs/app.log`) — neither has a mode that shows fabricated content.
 

@@ -59,10 +59,13 @@ def test_set_state_updates_label_directly(
     assert window._status_state.text() == "Custom state"
 
 
-def test_top_bar_mirrors_status_bar_context(
+def test_top_bar_diagnostics_popover_mirrors_status_bar_context(
     qtbot, gui_context: ApplicationContext, gui_settings: AppSettings, qapp
 ) -> None:
+    # v2 polish: the header itself no longer shows raw technical fields —
+    # they live one click away in the diagnostics popover instead (see
+    # docs/24_UI_UX_POLISH_V2_STATUS.md §4).
     window = _window(qtbot, gui_context, gui_settings, qapp)
-    meta_text = window.top_bar._meta_label.text()
-    assert gui_context.database_label in meta_text
-    assert "mock_provider" in meta_text
+    diagnostics = window.top_bar._diagnostics
+    assert diagnostics._values["database"].text() == gui_context.database_label
+    assert diagnostics._values["provider"].text() == "mock_provider"

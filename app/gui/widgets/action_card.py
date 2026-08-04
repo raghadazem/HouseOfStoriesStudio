@@ -1,9 +1,13 @@
-"""ActionCard — one clickable "production shortcut" card for the Quick Actions panel.
+"""ActionCard — one clickable "production shortcut" tile for the Quick Actions panel.
 
 Same click semantics as a ``QPushButton`` (one ``clicked`` signal, no
-extra behavior) — the redesign is purely visual: a bigger icon, a
-title, an optional one-line description, and the same hover-lift every
-``ElevatedCard`` gets, instead of a plain toolbar-style button.
+extra behavior). v2 polish: the icon now sits in the same tinted chip
+``SummaryCard`` uses (``class="iconChip"``) — one consistent icon
+treatment across the whole Dashboard instead of a bare, differently-
+sized emoji per widget — plus a larger minimum footprint for a bigger
+clickable target and a dedicated (not generic "muted") description
+style, matching the deliberate type hierarchy in
+``docs/24_UI_UX_POLISH_V2_STATUS.md`` §7.
 """
 
 from __future__ import annotations
@@ -28,16 +32,18 @@ class ActionCard(ElevatedCard):
         super().__init__(parent)
         self.setProperty("class", "actionCard")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setMinimumHeight(104)
+        self.setMinimumHeight(128)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(
             METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md
         )
-        layout.setSpacing(4)
+        layout.setSpacing(METRICS.spacing_sm)
 
         icon_label = QLabel(icon)
-        icon_label.setProperty("class", "actionCardIcon")
+        icon_label.setProperty("class", "iconChip")
+        icon_label.setFixedSize(40, 40)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_label)
 
         title_label = QLabel(title)
@@ -47,7 +53,7 @@ class ActionCard(ElevatedCard):
 
         if description:
             description_label = QLabel(description)
-            description_label.setProperty("class", "muted")
+            description_label.setProperty("class", "actionCardDescription")
             description_label.setWordWrap(True)
             layout.addWidget(description_label)
 

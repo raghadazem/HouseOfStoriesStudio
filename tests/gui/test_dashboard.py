@@ -20,8 +20,10 @@ def dashboard(qtbot, gui_context: ApplicationContext, theme: ThemeManager) -> Da
 
 
 def test_dashboard_shows_empty_state_on_fresh_database(dashboard: DashboardPage) -> None:
+    # Start == target == 0 for every card on a fresh database, so
+    # set_value_animated resolves instantly (no animation to wait out).
     assert dashboard._episodes_card._value_label.text() == "0"
-    assert dashboard._episodes_card._subtitle_label.text() == "No episodes yet"
+    assert dashboard._episodes_card._caption_label.text() == "No episodes yet"
     assert dashboard._characters_card._value_label.text() == "0"
     assert dashboard._assets_card._value_label.text() == "0"
     assert dashboard._review_card._value_label.text() == "0"
@@ -50,14 +52,18 @@ def test_dashboard_shows_real_counts_after_seeding(
     page = DashboardPage(gui_context, theme)
     qtbot.addWidget(page)
 
-    assert page._episodes_card._value_label.text() == "1"
-    assert page._characters_card._value_label.text() == "1"
-    assert page._assets_card._value_label.text() == "1"
-    assert page._review_card._value_label.text() == "1"  # the draft asset is pending review
+    # Values now count up from 0, so wait out the animation instead of
+    # asserting the label text synchronously.
+    qtbot.waitUntil(lambda: page._episodes_card._value_label.text() == "1", timeout=1500)
+    qtbot.waitUntil(lambda: page._characters_card._value_label.text() == "1", timeout=1500)
+    qtbot.waitUntil(lambda: page._assets_card._value_label.text() == "1", timeout=1500)
+    qtbot.waitUntil(lambda: page._review_card._value_label.text() == "1", timeout=1500)
 
 
-def test_dashboard_ai_provider_card_shows_mock_provider(dashboard: DashboardPage) -> None:
-    assert dashboard._provider_card._value_label.text() == "mock_provider"
+def test_dashboard_ai_card_shows_mock_provider(dashboard: DashboardPage) -> None:
+    assert dashboard._ai_card._subtitle_label.text() == "via mock_provider"
+    assert dashboard._ai_card._badge is not None
+    assert dashboard._ai_card._badge.text() == "Configured"
 
 
 def test_open_episode_001_shows_not_found_dialog_when_none_exists(

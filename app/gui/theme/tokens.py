@@ -132,13 +132,15 @@ class Metrics:
     radius_lg: int = 16
 
     font_family: str = '"Segoe UI", "Inter", "Helvetica Neue", Arial, sans-serif'
+    font_size_xs: int = 10
     font_size_sm: int = 11
     font_size_base: int = 13
     font_size_md: int = 15
     font_size_lg: int = 21
     font_size_xl: int = 28
+    font_size_xxl: int = 36
 
-    sidebar_width: int = 232
+    sidebar_width: int = 240
     topbar_height: int = 64
 
 

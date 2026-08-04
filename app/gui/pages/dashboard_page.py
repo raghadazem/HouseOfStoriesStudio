@@ -1,17 +1,23 @@
-"""DashboardPage — the one functional screen in Milestone 4A (UI/UX-polished).
+"""DashboardPage — the one functional screen in Milestone 4A (UI/UX-polished, v2).
 
 Reads real counts through ``ApplicationContext``'s services (never
 instantiating one itself), shows friendly empty states when the
 database has no data yet (or hasn't been migrated at all), and wires
 up whichever quick actions already have a real service behind them.
 
-Visual hierarchy (top to bottom): Production Progress → Dashboard
-Summary → Quick Actions → Recent Activity. Branding lives in the top
+Visual hierarchy (top to bottom): Production Progress → Overview
+(bento-grid summary, AI Activity + Pending Review given more visual
+weight) → Quick Actions → Recent Activity. Branding lives in the top
 bar, above this page, not duplicated here — see
-``docs/23_UI_UX_POLISH_STATUS.md`` for the full design rationale.
+``docs/24_UI_UX_POLISH_V2_STATUS.md`` for the full design rationale,
+including exactly which secondary metrics are real (every one of them
+is computed from data already in the database — nothing here is a
+fabricated trend, ETA, or queue).
 """
 
 from __future__ import annotations
+
+from datetime import UTC, datetime
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -26,7 +32,13 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import OperationalError
 
 from app.core.ai.exceptions import ProviderNotConfiguredError
-from app.core.db.enums import PipelineStage, ProductionTaskStatus, PromptCategory, PromptType
+from app.core.db.enums import (
+    ApprovalStatus,
+    PipelineStage,
+    ProductionTaskStatus,
+    PromptCategory,
+    PromptType,
+)
 from app.core.models import Asset, Episode, ProductionTask
 from app.core.services.exceptions import ConflictError, ServiceError
 from app.gui.context import ApplicationContext
@@ -39,6 +51,7 @@ from app.gui.widgets import (
     LoadingOverlay,
     ProgressStepper,
     SectionHeader,
+    StatusBadge,
     SummaryCard,
     parse_log_line,
     show_error,
@@ -53,8 +66,9 @@ _ACTIVITY_MAX_LINES = 12
 # enum (app/core/db/enums.py) into the 7 founder-specified stages for
 # the Production Progress stepper. Changing this list changes nothing
 # about how pipeline_stage is stored or validated — see
-# docs/23_UI_UX_POLISH_STATUS.md for why this stays presentation-only.
+# docs/24_UI_UX_POLISH_V2_STATUS.md for why this stays presentation-only.
 _PROGRESS_STEPS = ["Script", "Storyboard", "Images", "Voice", "Video", "SEO", "Upload"]
+_STAGE_ICONS = ["📝", "🧩", "🖼️", "🎙️", "🎞️", "🔍", "🚀"]
 
 _STAGE_TO_STEP_INDEX: dict[PipelineStage, int] = {
     PipelineStage.IDEA: 0,
@@ -74,8 +88,33 @@ _STAGE_TO_STEP_INDEX: dict[PipelineStage, int] = {
 }
 
 
+def _age_label(timestamp: datetime) -> str:
+    """Same bucketing as ``activity_timeline.format_relative_time``, but for
+    ``TimestampMixin`` timestamps (log lines are naive-local instead — see
+    that module's own note). ``TimestampMixin`` columns are declared
+    timezone-aware UTC, but SQLite has no native tz-aware storage, so
+    SQLAlchemy round-trips them as naive datetimes that still represent
+    UTC — treat a naive value as UTC rather than assuming it's already
+    tz-aware."""
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    seconds = max(0.0, (datetime.now(UTC) - timestamp).total_seconds())
+    if seconds < 60:
+        return "just now"
+    minutes = int(seconds // 60)
+    if minutes < 60:
+        return f"{minutes}m ago"
+    hours = int(minutes // 60)
+    if hours < 24:
+        return f"{hours}h ago"
+    days = int(hours // 24)
+    return f"{days}d ago"
+
+
 class DashboardPage(QWidget):
     navigate_requested = Signal(str)
+    episode_updated = Signal(str, str)  # title, stage_label ("" / "" when none)
+    review_count_updated = Signal(int)
 
     def __init__(
         self,
@@ -86,6 +125,7 @@ class DashboardPage(QWidget):
         super().__init__(parent)
         self.setObjectName("dashboardPage")
         self._ctx = ctx
+        self._theme = theme
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -124,10 +164,14 @@ class DashboardPage(QWidget):
         )
         panel_layout.setSpacing(METRICS.spacing_md)
 
-        self._progress_header = SectionHeader("Production Progress", "No active episode yet")
+        self._progress_percent_badge = StatusBadge("", "neutral")
+        self._progress_percent_badge.setVisible(False)
+        self._progress_header = SectionHeader(
+            "Production Progress", "No active episode yet", trailing=self._progress_percent_badge
+        )
         panel_layout.addWidget(self._progress_header)
 
-        self._progress_stepper = ProgressStepper(_PROGRESS_STEPS, None)
+        self._progress_stepper = ProgressStepper(_PROGRESS_STEPS, None, _STAGE_ICONS, self._theme)
         panel_layout.addWidget(self._progress_stepper)
 
         self._progress_empty = EmptyState(
@@ -139,7 +183,7 @@ class DashboardPage(QWidget):
 
         return panel
 
-    # --- 2. Dashboard Summary ----------------------------------------------------
+    # --- 2. Overview (bento-grid summary) -----------------------------------------
 
     def _build_summary_section(self) -> QVBoxLayout:
         section = QVBoxLayout()
@@ -148,19 +192,29 @@ class DashboardPage(QWidget):
 
         grid = QGridLayout()
         grid.setSpacing(METRICS.spacing_md)
+        for col in range(4):
+            grid.setColumnStretch(col, 1)
+
+        # Row 0: the two most "active/actionable" cards get more visual
+        # weight (hero styling, 2 grid columns each) than the rest —
+        # breaks the uniform-grid feel and puts the AI/production-facing
+        # numbers first, matching an AI studio's actual center of
+        # gravity. See docs/24_UI_UX_POLISH_V2_STATUS.md §6 and §10.
+        self._ai_card = SummaryCard("🤖", "AI Studio", hero=True)
+        self._review_card = SummaryCard("✅", "Pending Review", hero=True)
+        grid.addWidget(self._ai_card, 0, 0, 1, 2)
+        grid.addWidget(self._review_card, 0, 2, 1, 2)
+
+        # Row 1: four smaller, equally-weighted supporting stats.
         self._episodes_card = SummaryCard("🎬", "Episodes")
         self._characters_card = SummaryCard("👧", "Characters")
         self._assets_card = SummaryCard("🖼", "Assets")
-        self._review_card = SummaryCard("✅", "Pending Review")
         self._tasks_card = SummaryCard("📋", "Production Tasks")
-        self._provider_card = SummaryCard("🤖", "AI Provider")
-        cards = [
-            self._episodes_card, self._characters_card, self._assets_card,
-            self._review_card, self._tasks_card, self._provider_card,
-        ]
-        for index, card in enumerate(cards):
-            grid.addWidget(card, index // 3, index % 3)
-            grid.setColumnStretch(index % 3, 1)
+        for col, card in enumerate(
+            (self._episodes_card, self._characters_card, self._assets_card, self._tasks_card)
+        ):
+            grid.addWidget(card, 1, col)
+
         section.addLayout(grid)
         return section
 
@@ -313,16 +367,29 @@ class DashboardPage(QWidget):
     def refresh(self) -> None:
         try:
             with self._ctx.open_session() as session:
-                episode_count = len(self._ctx.episode_service.list_episodes(session))
-                character_count = len(self._ctx.character_service.list_characters(session))
+                episodes = self._ctx.episode_service.list_episodes(session)
+                characters = self._ctx.character_service.list_characters(session)
                 asset_count = session.query(Asset).count()
+                approved_asset_count = (
+                    session.query(Asset).filter_by(approval_status=ApprovalStatus.APPROVED).count()
+                )
                 pending_review = self._ctx.approval_service.list_pending_review_assets(session)
+                blocked_tasks = self._ctx.production_task_service.list_overdue_tasks(session)
                 open_tasks = (
                     session.query(ProductionTask)
                     .filter(ProductionTask.status != ProductionTaskStatus.DONE)
                     .count()
                 )
                 total_tasks = session.query(ProductionTask).count()
+                today_start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0)
+                generated_today = (
+                    session.query(Asset)
+                    .filter(Asset.source_tool.isnot(None), Asset.created_at >= today_start)
+                    .count()
+                )
+                generated_all_time = (
+                    session.query(Asset).filter(Asset.source_tool.isnot(None)).count()
+                )
                 active_episode = session.query(Episode).filter_by(number=1).one_or_none()
                 active_episode_summary = (
                     (active_episode.title_en, active_episode.pipeline_stage)
@@ -333,46 +400,65 @@ class DashboardPage(QWidget):
             self._show_db_not_ready()
             return
 
-        self._episodes_card.set_value(str(episode_count))
-        self._episodes_card.set_subtitle(
-            "No episodes yet" if episode_count == 0 else "Total episodes"
+        episode_count = len(episodes)
+        in_production = sum(1 for e in episodes if e.pipeline_stage != PipelineStage.PUBLISHED)
+        self._episodes_card.set_value_animated(episode_count)
+        self._episodes_card.set_caption(
+            "No episodes yet" if episode_count == 0 else f"{in_production} in production"
         )
 
-        self._characters_card.set_value(str(character_count))
-        self._characters_card.set_subtitle(
-            "No characters yet" if character_count == 0 else "Active characters"
+        character_count = len(characters)
+        locked_characters = sum(1 for c in characters if c.active_version_id is not None)
+        self._characters_card.set_value_animated(character_count)
+        self._characters_card.set_caption(
+            "No characters yet" if character_count == 0 else f"{locked_characters} locked"
         )
 
-        self._assets_card.set_value(str(asset_count))
-        self._assets_card.set_subtitle("No assets yet" if asset_count == 0 else "Managed files")
+        self._assets_card.set_value_animated(asset_count)
+        self._assets_card.set_caption(
+            "No assets yet" if asset_count == 0 else f"{approved_asset_count} approved"
+        )
 
-        self._review_card.set_value(str(len(pending_review)))
+        self._review_card.set_value_animated(len(pending_review))
         if pending_review:
+            oldest = min(asset.created_at for asset in pending_review)
+            self._review_card.set_caption(f"Oldest: {_age_label(oldest)}")
             self._review_card.set_badge("Needs attention", "warning")
         else:
+            self._review_card.set_caption("Nothing waiting")
             self._review_card.set_badge("All clear", "success")
 
-        self._tasks_card.set_value(str(open_tasks))
-        self._tasks_card.set_subtitle(
-            f"{open_tasks} open of {total_tasks} total" if total_tasks else "No tasks yet"
+        self._tasks_card.set_value_animated(open_tasks)
+        self._tasks_card.set_caption(
+            f"{len(blocked_tasks)} blocked" if blocked_tasks else "None blocked"
         )
         if total_tasks:
             self._tasks_card.set_progress((total_tasks - open_tasks) / total_tasks)
 
         providers = self._ctx.ai_orchestrator.list_available_providers("image")
+        self._ai_card.set_value_animated(generated_today)
+        self._ai_card.set_caption(f"{generated_all_time} generated all-time")
         if providers:
-            self._provider_card.set_value(providers[0])
-            self._provider_card.set_badge("Configured", "success")
+            self._ai_card.set_subtitle(f"via {providers[0]}")
+            self._ai_card.set_badge("Configured", "success")
         else:
-            self._provider_card.set_value("None")
-            self._provider_card.set_badge("Not configured", "danger")
+            self._ai_card.set_subtitle("No provider configured")
+            self._ai_card.set_badge("Not configured", "danger")
 
         self._refresh_progress_panel(active_episode_summary)
         self._load_recent_activity()
 
+        self.review_count_updated.emit(len(pending_review))
+        if active_episode_summary is not None:
+            title, stage = active_episode_summary
+            self.episode_updated.emit(title, stage.value.replace("_", " ").title())
+        else:
+            self.episode_updated.emit("", "")
+
     def _refresh_progress_panel(self, active_episode_summary: tuple[str, PipelineStage] | None) -> None:
         if active_episode_summary is None:
             self._progress_header.set_subtitle("No active episode yet")
+            self._progress_percent_badge.setVisible(False)
             self._progress_stepper.setVisible(False)
             self._progress_empty.setVisible(True)
             return
@@ -381,7 +467,13 @@ class DashboardPage(QWidget):
         self._progress_header.set_subtitle(f"{title} · {stage.value.replace('_', ' ').title()}")
         self._progress_stepper.setVisible(True)
         self._progress_empty.setVisible(False)
-        self._progress_stepper.set_progress(_PROGRESS_STEPS, _STAGE_TO_STEP_INDEX.get(stage, 0))
+        step_index = _STAGE_TO_STEP_INDEX.get(stage, 0)
+        self._progress_stepper.set_progress(_PROGRESS_STEPS, step_index, _STAGE_ICONS)
+
+        percent = round(step_index / (len(_PROGRESS_STEPS) - 1) * 100)
+        self._progress_percent_badge.set_text(f"{percent}%")
+        self._progress_percent_badge.set_variant("success" if percent == 100 else "info")
+        self._progress_percent_badge.setVisible(True)
 
     def _load_recent_activity(self) -> None:
         log_path = self._ctx.config.log_dir / "app.log"

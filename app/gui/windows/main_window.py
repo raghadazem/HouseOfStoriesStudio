@@ -45,6 +45,14 @@ class MainWindow(QMainWindow):
         self._build_layout()
         self._build_status_bar()
         self._wire_signals()
+        # DashboardPage.refresh()es itself once during its own __init__
+        # (so it's a usable standalone widget in tests), which happens
+        # before the signal connections just above exist — that first
+        # episode_updated/review_count_updated emission has no listener
+        # yet, so the top bar's episode chip and the sidebar's review
+        # badge would otherwise stay unset until the next navigation.
+        # Refresh once more now that both are wired.
+        self.dashboard_page.refresh()
 
         self._theme.theme_changed.connect(self._on_theme_changed)
         self._on_theme_changed(self._theme.theme_name)
@@ -69,7 +77,7 @@ class MainWindow(QMainWindow):
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
 
-        self.sidebar = Sidebar()
+        self.sidebar = Sidebar(self._theme)
         body.addWidget(self.sidebar)
 
         self.stack = QStackedWidget()
@@ -120,6 +128,11 @@ class MainWindow(QMainWindow):
         self.top_bar.theme_toggle_requested.connect(self._on_theme_toggle)
         self.top_bar.about_requested.connect(self._on_about)
         self.dashboard_page.navigate_requested.connect(self.navigate_to)
+        self.dashboard_page.episode_updated.connect(self.top_bar.set_current_episode)
+        self.dashboard_page.review_count_updated.connect(self._on_review_count_updated)
+
+    def _on_review_count_updated(self, count: int) -> None:
+        self.sidebar.set_badge("review_queue", count)
 
     def navigate_to(self, key: str) -> None:
         """Programmatic navigation (e.g. a Dashboard quick action) — goes
