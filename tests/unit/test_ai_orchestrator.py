@@ -11,6 +11,7 @@ fresh subprocess.
 from __future__ import annotations
 
 import logging
+import tempfile
 import uuid
 from pathlib import Path
 from typing import ClassVar
@@ -36,7 +37,14 @@ class _FakeConfiguredProvider(AIProvider):
         return True
 
     def generate(self, request: GenerationRequest) -> GenerationResult:
-        path = Path(f"/tmp/fake_{uuid.uuid4().hex}.png")
+        # Platform-safe temp path, matching the real MockProvider
+        # (app/core/ai/providers/mock_provider.py) — a hardcoded POSIX
+        # "/tmp/..." resolves to a nonexistent "\tmp\..." off the current
+        # drive on Windows, which is a pure test-portability bug, not
+        # anything about real AI provider behavior.
+        temp_dir = Path(tempfile.gettempdir()) / "house_of_stories_test_fake_provider"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        path = temp_dir / f"fake_{uuid.uuid4().hex}.png"
         path.write_bytes(b"fake")
         _FakeConfiguredProvider.generated_paths.append(path)
         return GenerationResult(output_path=path, provider_name=self.name)
@@ -64,6 +72,13 @@ class _FakeSucceedingWorkflow(Workflow):
     def run(self, ctx: WorkflowContext) -> WorkflowResult:
         request = GenerationRequest(modality="image", prompt_text="x")
         result = ctx.provider.generate(request)
+        # Every real workflow (character_reference_workflow.py,
+        # scene_image_workflow.py, voice_line_workflow.py,
+        # thumbnail_workflow.py) sets this immediately after a
+        # successful generate() — mirrored here so this fake actually
+        # exercises AIOrchestrator's temp-file cleanup on the success
+        # path, not just the failure-after-generate path below.
+        ctx.last_generation_result = result
         return WorkflowResult(
             asset=_FakeAsset(),  # type: ignore[arg-type]
             generation_request=request,
@@ -116,6 +131,19 @@ def _orchestrator() -> AIOrchestrator:
             _FakeFailingAfterGenerateWorkflow.name: _FakeFailingAfterGenerateWorkflow,
         },
     )
+
+
+def test_fake_provider_generate_writes_a_real_temp_file(session: Session) -> None:
+    """The fixture's own file must actually exist right after generate()
+    — the thing the hardcoded POSIX "/tmp/..." path silently failed at
+    on Windows, where it pointed at a directory that was never created."""
+    _FakeConfiguredProvider.generated_paths.clear()
+    provider = _FakeConfiguredProvider()
+
+    result = provider.generate(GenerationRequest(modality="image", prompt_text="x"))
+
+    assert result.output_path.exists()
+    assert result.output_path.read_bytes() == b"fake"
 
 
 def test_list_workflows(session: Session) -> None:
@@ -172,6 +200,29 @@ def test_run_workflow_success_returns_result_and_logs(session: Session) -> None:
     assert len(records) == 1
     assert "generation_attempt" in records[0].getMessage()
     assert '"outcome": "success"' in records[0].getMessage()
+
+
+def test_run_workflow_cleans_up_temp_file_after_success(session: Session) -> None:
+    """The provider's temp output exists during the run and is deleted
+    once the orchestrator has finished (see AIOrchestrator._cleanup_temp_file)
+    — unlike the failure-after-generate case below, this path only
+    started being exercised once ``_FakeSucceedingWorkflow`` set
+    ``ctx.last_generation_result``, matching every real workflow."""
+    _FakeConfiguredProvider.generated_paths.clear()
+
+    _orchestrator().run_workflow(
+        session, "fake_success", provider_name="fake_configured",
+        prompt_template_id=_prompt_template_id(session),
+    )
+
+    assert len(_FakeConfiguredProvider.generated_paths) == 1
+    generated_path = _FakeConfiguredProvider.generated_paths[0]
+    # Platform-safe by construction (tempfile.gettempdir()-backed, see
+    # _FakeConfiguredProvider.generate) — this assertion is what
+    # "works on Windows" actually means here: the path is real and
+    # writable/deletable under Windows' own temp directory, not a
+    # POSIX-only location that never existed in the first place.
+    assert not generated_path.exists()
 
 
 def test_run_workflow_wraps_unexpected_exception_as_workflow_error(session: Session) -> None:

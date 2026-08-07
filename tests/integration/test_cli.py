@@ -38,6 +38,13 @@ def _run(*args: str, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         env=env,
         capture_output=True,
         text=True,
+        # Explicit, not left to text=True's locale-default decoding: the
+        # CLI now always emits UTF-8 (app/cli/main.py::_ensure_utf8_stdio),
+        # so the parent must decode with the same encoding regardless of
+        # the host's system locale codepage — on a non-English-locale
+        # Windows machine (e.g. cp1255), the default would otherwise fail
+        # to decode the child's Arabic output with a UnicodeDecodeError.
+        encoding="utf-8",
         timeout=60,
         check=False,
     )
@@ -66,6 +73,44 @@ def test_list_and_show_episode(cli_env: dict[str, str]) -> None:
     assert "Melissa and Bilsan and the Lost Little Turtle" in result.stdout
     assert "ميليسا وبيلسان" in result.stdout
     assert "shorts: 3" in result.stdout
+
+
+# --- Windows/Unicode stabilization regression: see docs/engineering/WINDOWS_DEVELOPMENT.md ---
+
+
+def test_show_episode_prints_arabic_text_without_encoding_error(cli_env: dict[str, str]) -> None:
+    """Regression test: on Windows, a captured subprocess's stdout defaults
+    to the console's legacy codepage (e.g. cp1252) unless the CLI forces
+    UTF-8 itself — cp1252 can't represent Arabic, so this used to crash
+    ``show-episode`` with a ``UnicodeEncodeError`` (see app/cli/main.py's
+    ``_ensure_utf8_stdio``). Deliberately does not set PYTHONUTF8 or
+    PYTHONIOENCODING in ``cli_env`` — the whole point is that a user
+    should never have to configure that themselves."""
+    _run("init-db", env=cli_env)
+    _run("seed-demo", env=cli_env)
+
+    result = _run("show-episode", "ep001_lost_little_turtle", env=cli_env)
+
+    assert result.returncode == 0, result.stderr
+    assert "UnicodeEncodeError" not in result.stderr
+    assert "Traceback" not in result.stderr
+    # Episode title, and both characters' Arabic names, all survive intact.
+    assert "ميليسا وبيلسان والسلحفاة الصغيرة الضائعة" in result.stdout
+
+
+def test_run_ai_workflow_path_survives_arabic_output_upstream(cli_env: dict[str, str]) -> None:
+    """The AI-workflow command path previously failed downstream of this
+    same bug: it parses ``show-episode``'s stdout for the episode id, so
+    a UnicodeEncodeError there (before the id line is ever printed) took
+    this command down with it too, with an unrelated-looking StopIteration
+    at the parsing site rather than the real encoding error."""
+    _run("init-db", env=cli_env)
+    _run("seed-demo", env=cli_env)
+
+    result = _run("show-episode", "ep001_lost_little_turtle", env=cli_env)
+    assert result.returncode == 0, result.stderr
+    id_line = next(line for line in result.stdout.splitlines() if line.strip().startswith("id:"))
+    assert id_line.split()[-1]  # a real UUID was printed, parsing didn't need to guess
 
 
 def test_show_episode_not_found_reports_clean_error(cli_env: dict[str, str]) -> None:

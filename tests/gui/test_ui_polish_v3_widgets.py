@@ -99,12 +99,10 @@ def test_toolbar_row_wraps_below_threshold(qtbot) -> None:
     toolbar.show()
 
     toolbar.resize(900, 40)
-    qtbot.wait(20)
-    assert toolbar._wrapped is False
+    qtbot.waitUntil(lambda: toolbar._wrapped is False, timeout=1000)
 
     toolbar.resize(400, 80)
-    qtbot.wait(20)
-    assert toolbar._wrapped is True
+    qtbot.waitUntil(lambda: toolbar._wrapped is True, timeout=1000)
 
 
 # --- PageHeader wraps its primary button at very narrow widths -----------------------
@@ -116,12 +114,10 @@ def test_page_header_wraps_button_below_threshold(qtbot) -> None:
     header.show()
 
     header.resize(800, 60)
-    qtbot.wait(20)
-    assert header._wrapped is False
+    qtbot.waitUntil(lambda: header._wrapped is False, timeout=1000)
 
     header.resize(300, 100)
-    qtbot.wait(20)
-    assert header._wrapped is True
+    qtbot.waitUntil(lambda: header._wrapped is True, timeout=1000)
 
 
 def test_page_header_never_wraps_without_a_primary_button(qtbot) -> None:
@@ -129,8 +125,7 @@ def test_page_header_never_wraps_without_a_primary_button(qtbot) -> None:
     qtbot.addWidget(header)
     header.show()
     header.resize(200, 60)
-    qtbot.wait(20)
-    assert header._wrapped is False
+    qtbot.waitUntil(lambda: header._wrapped is False, timeout=1000)
 
 
 # --- Toast / ToastHost -----------------------------------------------------------------

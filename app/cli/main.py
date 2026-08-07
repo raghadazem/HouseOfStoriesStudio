@@ -44,6 +44,34 @@ from app.logging_setup import configure_logging, get_logger
 logger = get_logger("cli")
 
 
+def _ensure_utf8_stdio() -> None:
+    """Force stdout/stderr to UTF-8, once, before any command prints.
+
+    Windows' default console/pipe encoding is a legacy codepage (e.g.
+    cp1252) unless the user has set ``PYTHONUTF8``/``PYTHONIOENCODING``
+    or run ``chcp 65001`` — none of which a founder running ``hos-cli``
+    should ever need to know about for a CLI whose whole purpose is
+    managing Arabic-language content (episode titles, etc. — see
+    ``episode.title_ar`` in ``cmd_show_episode``). Without this, printing
+    Arabic text raises ``UnicodeEncodeError`` and the command crashes.
+
+    ``reconfigure()`` is each stream's own public API (Python 3.7+), not
+    a replacement of ``sys.stdout``/``sys.stderr`` — so this is a one-time
+    setup call, not global monkeypatching. Guarded on both ends: skipped
+    entirely if a stream doesn't expose ``reconfigure`` at all (e.g. one
+    substituted by a test harness), and never lets a failed reconfigure
+    crash the CLI on any platform.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (OSError, ValueError):
+            pass
+
+
 def _session_factory() -> sessionmaker[Session]:
     engine = create_db_engine()
     return create_session_factory(engine)
@@ -351,6 +379,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _ensure_utf8_stdio()
     configure_logging()
     parser = build_parser()
     args = parser.parse_args(argv)

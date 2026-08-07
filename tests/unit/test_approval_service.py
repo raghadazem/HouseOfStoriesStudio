@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db.enums import ApprovalDecision, ApprovalStatus, AssetType
 from app.core.models import Asset, Episode
+from app.core.models.approval import ApprovalRecord
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import NotFoundError, ValidationError
 
@@ -62,6 +65,9 @@ def test_approve_reject_and_history_ordering(session: Session) -> None:
 
     history = service.list_approval_history(session, "asset", asset.id)
     assert [r.decision for r in history] == [ApprovalDecision.APPROVED, ApprovalDecision.REJECTED]
+    # Ordered by revision (deterministic), not decided_at (can tie) — see
+    # docs/engineering/WINDOWS_DEVELOPMENT.md for why this changed.
+    assert [r.revision for r in history] == [1, 2]
 
 
 def test_get_current_approval_state_returns_latest(session: Session) -> None:
@@ -77,6 +83,107 @@ def test_get_current_approval_state_returns_latest(session: Session) -> None:
         service.get_current_approval_state(session, "asset", asset.id)
         == ApprovalDecision.NEEDS_CHANGES
     )
+
+
+# --- Windows/Test Stabilization: deterministic revision ordering ------
+# See docs/engineering/WINDOWS_DEVELOPMENT.md for the full root-cause
+# writeup (ORDER BY decided_at DESC alone was non-deterministic when two
+# decisions land on the same timestamp).
+
+
+def test_revision_numbers_are_assigned_sequentially_and_deterministically(
+    session: Session,
+) -> None:
+    service = ApprovalService()
+    asset = _asset(session)
+
+    first = service.approve_entity(session, "asset", asset.id)
+    second = service.request_changes(session, "asset", asset.id, notes="fix it")
+    third = service.reject_entity(session, "asset", asset.id, notes="never mind, reject")
+
+    assert (first.revision, second.revision, third.revision) == (1, 2, 3)
+
+
+def test_current_state_returns_highest_revision_even_with_identical_timestamps(
+    session: Session,
+) -> None:
+    """The exact bug this migration fixes: two decisions sharing a
+    ``decided_at`` value used to make "current state" non-deterministic.
+    Forces the tie directly (rather than hoping two real calls race)
+    so this test is itself deterministic."""
+    service = ApprovalService()
+    asset = _asset(session)
+    tied_timestamp = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+
+    first = service.approve_entity(session, "asset", asset.id)
+    first.decided_at = tied_timestamp
+    second = service.request_changes(session, "asset", asset.id, notes="actually, fix this")
+    second.decided_at = tied_timestamp  # identical to `first` — the tie
+    session.flush()
+
+    assert first.decided_at == second.decided_at  # confirm the tie is real
+    assert second.revision > first.revision
+    assert (
+        service.get_current_approval_state(session, "asset", asset.id)
+        == ApprovalDecision.NEEDS_CHANGES
+    )
+
+
+def test_approval_history_order_is_deterministic_with_identical_timestamps(
+    session: Session,
+) -> None:
+    service = ApprovalService()
+    asset = _asset(session)
+    tied_timestamp = datetime(2026, 8, 1, 12, 0, 0, tzinfo=UTC)
+
+    service.approve_entity(session, "asset", asset.id)
+    service.reject_entity(session, "asset", asset.id, notes="no good")
+    for record in service.list_approval_history(session, "asset", asset.id):
+        record.decided_at = tied_timestamp
+    session.flush()
+
+    history = service.list_approval_history(session, "asset", asset.id)
+    assert [r.decision for r in history] == [ApprovalDecision.APPROVED, ApprovalDecision.REJECTED]
+    assert [r.revision for r in history] == [1, 2]
+
+
+def test_two_entities_maintain_independent_revision_sequences(session: Session) -> None:
+    service = ApprovalService()
+    asset_a = _asset(session)
+    asset_b = _asset(session, relative_path="episodes/ep001/images/b.png", checksum="b" * 64)
+
+    service.approve_entity(session, "asset", asset_a.id)
+    a_second = service.reject_entity(session, "asset", asset_a.id, notes="redo")
+
+    b_first = service.approve_entity(session, "asset", asset_b.id)
+
+    assert a_second.revision == 2
+    assert b_first.revision == 1  # unaffected by asset_a's history
+
+
+def test_duplicate_revision_for_same_entity_violates_unique_constraint(
+    session: Session,
+) -> None:
+    """Guards the invariant ApprovalService._next_revision relies on —
+    bypassing the service and writing a raw duplicate must fail loudly,
+    not silently produce two "revision 1" rows for the same entity."""
+    asset = _asset(session)
+    session.add(
+        ApprovalRecord(
+            entity_type="asset", entity_id=asset.id,
+            decision=ApprovalDecision.APPROVED, revision=1,
+        )
+    )
+    session.flush()
+
+    session.add(
+        ApprovalRecord(
+            entity_type="asset", entity_id=asset.id,
+            decision=ApprovalDecision.REJECTED, revision=1, notes="dup",
+        )
+    )
+    with pytest.raises(IntegrityError):
+        session.flush()
 
 
 def test_approval_records_are_never_mutated_in_place(session: Session) -> None:

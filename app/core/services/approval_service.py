@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.db.enums import ApprovalDecision, ApprovalStatus
@@ -130,19 +131,28 @@ class ApprovalService:
         return (
             session.query(ApprovalRecord)
             .filter_by(entity_type=entity_type, entity_id=entity_id)
-            .order_by(ApprovalRecord.decided_at)
+            .order_by(ApprovalRecord.revision)
             .all()
         )
 
     def get_current_approval_state(
         self, session: Session, entity_type: str, entity_id: uuid.UUID
     ) -> ApprovalDecision | None:
-        """The most recent decision recorded for this entity, or ``None`` if never reviewed."""
+        """The decision with the highest ``revision`` for this entity, or
+        ``None`` if never reviewed.
+
+        Ordered by ``revision``, not ``decided_at``: two decisions can be
+        recorded close enough together to land on the same wall-clock
+        timestamp (clock resolution/scheduling variance — not specific to
+        any one platform), which made timestamp ordering non-deterministic.
+        ``revision`` is a real, transactionally-assigned monotonic integer
+        per ``(entity_type, entity_id)``, so this is always deterministic.
+        """
         self._validate_entity_type(entity_type)
         latest = (
             session.query(ApprovalRecord)
             .filter_by(entity_type=entity_type, entity_id=entity_id)
-            .order_by(ApprovalRecord.decided_at.desc())
+            .order_by(ApprovalRecord.revision.desc())
             .first()
         )
         return latest.decision if latest is not None else None
@@ -242,10 +252,33 @@ class ApprovalService:
             decision=decision,
             decided_by=decided_by,
             notes=notes,
+            revision=self._next_revision(session, entity_type, entity_id),
         )
         session.add(record)
         session.flush()
         return record
+
+    @staticmethod
+    def _next_revision(session: Session, entity_type: str, entity_id: uuid.UUID) -> int:
+        """The next revision number for this entity: 1 for its first
+        decision, otherwise one past the highest revision recorded so far.
+
+        Computed here and inserted in the same flush as the new row (see
+        :meth:`_record`) — a plain query-then-insert, not a
+        ``SELECT ... FOR UPDATE``-style lock, because this is a
+        single-user desktop application with one writer at a time, not a
+        multi-process/multi-user server. The
+        ``uq_approval_records_entity_revision`` unique constraint on
+        ``ApprovalRecord`` is the backstop: if this assumption were ever
+        wrong, a real collision surfaces as a clear ``IntegrityError``
+        instead of silently producing two "latest" decisions.
+        """
+        current_max = (
+            session.query(func.max(ApprovalRecord.revision))
+            .filter_by(entity_type=entity_type, entity_id=entity_id)
+            .scalar()
+        )
+        return (current_max or 0) + 1
 
     @staticmethod
     def _validate_entity_type(entity_type: str) -> None:

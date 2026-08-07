@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Enum, Index, String, Text, Uuid
+from sqlalchemy import DateTime, Enum, Index, Integer, String, Text, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, utc_now
@@ -23,11 +23,27 @@ from app.core.db.enums import ApprovalDecision
 
 
 class ApprovalRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
-    """One approve/reject/needs-changes decision on some other entity."""
+    """One approve/reject/needs-changes decision on some other entity.
+
+    ``revision`` (Milestone: Windows & Test Stabilization,
+    ``docs/engineering/WINDOWS_DEVELOPMENT.md``) is the authoritative
+    ordering for "which decision is current" — 1, 2, 3... per
+    ``(entity_type, entity_id)``, assigned transactionally by
+    :meth:`~app.core.services.approval_service.ApprovalService._record`.
+    ``decided_at`` remains for display/audit purposes only. It is *not*
+    a safe ordering key on its own: two decisions recorded in quick
+    succession can land on the same wall-clock timestamp (the same
+    resolution/scheduling variance exists on every platform), which
+    made ``ORDER BY decided_at DESC LIMIT 1`` non-deterministic — the
+    exact bug ``revision`` exists to close.
+    """
 
     __tablename__ = "approval_records"
     __table_args__ = (
         Index("ix_approval_records_entity", "entity_type", "entity_id"),
+        UniqueConstraint(
+            "entity_type", "entity_id", "revision", name="uq_approval_records_entity_revision"
+        ),
     )
 
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -39,6 +55,7 @@ class ApprovalRecord(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     decided_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
+    revision: Mapped[int] = mapped_column(Integer, nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only

@@ -133,6 +133,7 @@ def test_approval_record_is_polymorphic_and_not_a_foreign_key(session: Session) 
         decision=ApprovalDecision.NEEDS_CHANGES,
         decided_by="founder",
         notes="Outfit color needs to match the approved palette.",
+        revision=1,
     )
     session.add(record)
     session.commit()  # must not raise even though nothing with this id exists
