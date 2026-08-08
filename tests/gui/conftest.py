@@ -68,3 +68,30 @@ def gui_settings(tmp_path: Path) -> AppSettings:
 @pytest.fixture()
 def theme(qapp) -> ThemeManager:
     return ThemeManager(qapp, initial_theme="light")
+
+
+@pytest.fixture(autouse=True)
+def _reset_qapplication_style(qapp) -> Iterator[None]:
+    """Undo any global QApplication-level styling a test applied.
+
+    ``ThemeManager.__init__``/``set_theme`` (``docs/21_DESIGN_SYSTEM.md``
+    §3) call ``QApplication.setStyleSheet(...)`` — the *only* place any
+    stylesheet is ever applied in this app. Because the ``QApplication``
+    is a process-wide singleton every GUI test shares (pytest-qt's
+    ``qapp`` fixture can't create more than one per process), a
+    stylesheet set by one test — whether via the ``theme`` fixture above
+    or a test constructing its own ``ThemeManager`` directly — silently
+    stayed active for every test that ran afterward, changing button/
+    font padding (and therefore measured widget sizes) in tests that
+    never touched theming themselves. Found via ``PageHeader.resize()``
+    measuring ~437px instead of the requested 300px only when run after
+    other GUI tests, never in isolation — see
+    ``docs/28_ASSET_IMPORT_AND_GUI_TEST_ISOLATION_STATUS.md``.
+
+    Autouse, so every test under ``tests/gui/`` gets this reset without
+    needing to remember to request it — the same reason no single test
+    file was ever going to reliably self-clean, since none of them knew
+    about any other file's leftover state.
+    """
+    yield
+    qapp.setStyleSheet("")

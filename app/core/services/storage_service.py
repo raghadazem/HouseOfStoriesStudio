@@ -27,6 +27,30 @@ from app.core.services.exceptions import ValidationError
 _CHECKSUM_CHUNK_SIZE = 1024 * 1024  # 1 MB
 
 
+def _win_long_path(path: Path) -> str:
+    """A path string safe to pass to ``shutil``/``os`` file operations on
+    Windows even when it exceeds the legacy 260-character ``MAX_PATH``.
+
+    Windows file APIs reject an absolute path longer than ``MAX_PATH``
+    unless it carries the ``\\\\?\\`` extended-length prefix (no admin
+    rights or OS-level "enable long paths" setting required — that
+    prefix alone is what raises the limit, from the calling process's
+    side, to ~32,767 characters). Found via
+    ``copy_file_atomic`` intermittently raising ``WinError 3`` — not a
+    race or antivirus interference, but a plain over-the-limit path
+    (deep pytest tmp dirs + a 64-hex-char content-digest filename
+    reliably crossed it). A no-op everywhere except Windows, and even
+    there, a no-op for a path already under the limit or already
+    prefixed. See ``docs/28_ASSET_IMPORT_AND_GUI_TEST_ISOLATION_STATUS.md``.
+    """
+    if os.name != "nt":
+        return str(path)
+    resolved = str(path.resolve())
+    if resolved.startswith("\\\\?\\"):
+        return resolved
+    return "\\\\?\\" + resolved
+
+
 class StorageService:
     """Filesystem operations scoped to ``AppConfig.production_dir``."""
 
@@ -101,13 +125,21 @@ class StorageService:
         written file at the final destination path.
         """
         dest = self.resolve_managed_path(dest_relative_path)
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = dest.parent / f".{dest.name}.{uuid.uuid4().hex}.tmp"
+        os.makedirs(_win_long_path(dest.parent), exist_ok=True)
+        # Short and content-independent on purpose (see _win_long_path):
+        # the old scheme embedded the full (already long, digest-based)
+        # destination filename in the temp name too, which was enough on
+        # its own to push some otherwise-fine destination paths over
+        # Windows' legacy 260-character MAX_PATH.
+        temp_path = dest.parent / f".{uuid.uuid4().hex}.tmp"
         try:
-            shutil.copy2(source, temp_path)
-            os.replace(temp_path, dest)
+            shutil.copy2(_win_long_path(source), _win_long_path(temp_path))
+            os.replace(_win_long_path(temp_path), _win_long_path(dest))
         except Exception:
-            temp_path.unlink(missing_ok=True)
+            try:
+                os.remove(_win_long_path(temp_path))
+            except FileNotFoundError:
+                pass
             raise
         return dest
 
