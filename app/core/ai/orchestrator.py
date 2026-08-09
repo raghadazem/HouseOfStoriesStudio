@@ -55,6 +55,20 @@ class AIOrchestrator:
     def list_workflows(self) -> list[str]:
         return sorted(self._workflow_registry)
 
+    def get_provider(self, provider_name: str) -> AIProvider:
+        """Return the (cached, per-orchestrator) provider instance for ``provider_name``.
+
+        Public so callers that need provider-level metadata without
+        running a full workflow (e.g. ``generation_runner`` reading a
+        real provider's configured ``model`` for ``GenerationJob``
+        provenance) share the exact same instance ``run_workflow`` will
+        use, rather than constructing a second one.
+
+        Raises:
+            ValidationError: Unknown ``provider_name``.
+        """
+        return self._get_provider_or_raise(provider_name)
+
     def list_available_providers(self, modality: Modality) -> list[str]:
         """Providers that both support this modality and report ``is_configured()``."""
         available = []

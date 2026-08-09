@@ -28,6 +28,7 @@ EXPECTED_TABLES = {
     "characters",
     "episode_characters",
     "episodes",
+    "generation_jobs",
     "license_records",
     "production_tasks",
     "prompt_templates",

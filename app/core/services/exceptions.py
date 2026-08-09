@@ -47,6 +47,20 @@ class ChecklistError(ServiceError):
     """A readiness checklist blocked an operation that requires it to pass."""
 
 
+class CharacterLockIncompleteError(ServiceError):
+    """A CharacterVersion is missing required Character Lock fields.
+
+    Raised instead of a generic validation error so the caller (the
+    GUI, per the founder's explicit requirement) can read
+    ``missing_fields`` and explain exactly what is missing, rather than
+    showing an unhelpful generic message.
+    """
+
+    def __init__(self, message: str, missing_fields: list[str]) -> None:
+        super().__init__(message)
+        self.missing_fields = missing_fields
+
+
 class ExportBlockedError(ServiceError):
     """A final export was requested but blocking checklist issues exist."""
 

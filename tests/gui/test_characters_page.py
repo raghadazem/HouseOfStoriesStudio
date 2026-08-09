@@ -123,6 +123,8 @@ def test_open_detail_builds_dialog_with_version_history(
     from app.gui.pages import characters_page as module
 
     class _FakeDialog:
+        needs_refresh = False
+
         def __init__(self, *args, **kwargs):
             opened.append(args)
 

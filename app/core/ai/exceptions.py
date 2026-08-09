@@ -24,9 +24,41 @@ class ProviderNotConfiguredError(ServiceError):
 class ProviderRequestError(ServiceError):
     """A real provider call failed (network error, API error response, ...).
 
-    Unused until a real (non-mock) provider exists — kept here now so
-    the exception hierarchy a future provider needs already exists.
+    Base class for every specific real-call failure below. Catch this
+    directly for "some real provider call failed, I don't care exactly
+    why"; catch a subclass for anything that needs to react differently
+    (e.g. the GUI showing a distinct message per category without ever
+    parsing a provider-specific error string).
     """
+
+
+class ProviderAuthenticationError(ProviderRequestError):
+    """The provider rejected the request due to an invalid/missing credential."""
+
+
+class ProviderRateLimitError(ProviderRequestError):
+    """The provider rejected the request due to rate limiting or quota exhaustion."""
+
+
+class ProviderTimeoutError(ProviderRequestError):
+    """The provider call did not complete within the configured timeout."""
+
+
+class ProviderRejectionError(ProviderRequestError):
+    """The provider declined to generate content (safety/policy rejection).
+
+    Distinct from :class:`ProviderMalformedResponseError`: this means
+    the provider understood the request and explicitly refused it, not
+    that its response was unreadable.
+    """
+
+
+class ProviderMalformedResponseError(ProviderRequestError):
+    """The provider returned a response this app could not interpret."""
+
+
+class ProviderNetworkError(ProviderRequestError):
+    """A network-level failure occurred before/while reaching the provider."""
 
 
 class WorkflowError(ServiceError):

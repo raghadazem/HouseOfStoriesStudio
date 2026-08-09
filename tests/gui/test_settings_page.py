@@ -70,3 +70,36 @@ def test_shows_mock_provider_as_configured(
     qtbot.addWidget(page)
 
     assert "mock_provider" in page._info_text("Image generation")
+
+
+def test_gemini_section_shows_not_configured_without_api_key(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager, gui_settings: AppSettings, monkeypatch
+) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    page = SettingsPage(gui_context, theme, gui_settings)
+    qtbot.addWidget(page)
+
+    assert page._info_text("Status") == "Not configured"
+    assert page._info_text("Model") == "gemini-3.1-flash-image"
+
+
+def test_gemini_section_shows_configured_with_api_key_and_never_shows_the_key(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager, gui_settings: AppSettings, monkeypatch
+) -> None:
+    monkeypatch.setenv("GEMINI_API_KEY", "super-secret-value")
+    page = SettingsPage(gui_context, theme, gui_settings)
+    qtbot.addWidget(page)
+
+    assert page._info_text("Status") == "Configured"
+    all_text = " ".join(label.text() for label in page.findChildren(type(page._theme_label)))
+    assert "super-secret-value" not in all_text
+
+
+def test_gemini_section_reads_model_override_from_env(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager, gui_settings: AppSettings, monkeypatch
+) -> None:
+    monkeypatch.setenv("HOS_GEMINI_IMAGE_MODEL", "gemini-3-pro-image")
+    page = SettingsPage(gui_context, theme, gui_settings)
+    qtbot.addWidget(page)
+
+    assert page._info_text("Model") == "gemini-3-pro-image"

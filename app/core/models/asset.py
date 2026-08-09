@@ -23,6 +23,7 @@ from app.core.models._path_validation import validate_relative_path
 if TYPE_CHECKING:
     from app.core.models.character import CharacterVersion
     from app.core.models.episode import Episode, Scene, Short
+    from app.core.models.generation_job import GenerationJob
     from app.core.models.prompt import PromptTemplate
 
 _CHECKSUM_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -88,6 +89,12 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     short_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("shorts.id", ondelete="SET NULL"), nullable=True
     )
+    # The GenerationJob that produced this asset, if any. NULL for every
+    # manually imported asset and for every asset imported before
+    # Milestone 7 — existing/manual imports remain valid with no change.
+    generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
+    )
 
     approval_status: Mapped[ApprovalStatus] = mapped_column(
         Enum(ApprovalStatus, native_enum=False, length=32),
@@ -103,6 +110,9 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     episode: Mapped[Episode | None] = relationship()
     scene: Mapped[Scene | None] = relationship(back_populates="assets")
     short: Mapped[Short | None] = relationship(foreign_keys=[short_id])
+    generation_job: Mapped[GenerationJob | None] = relationship(
+        foreign_keys=[generation_job_id]
+    )
 
     @validates("relative_path")
     def validate_relative_path(self, key: str, value: str) -> str:

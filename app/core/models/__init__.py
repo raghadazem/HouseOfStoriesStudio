@@ -21,6 +21,7 @@ from app.core.models.episode import (
     scene_characters,
     short_scenes,
 )
+from app.core.models.generation_job import GenerationJob
 from app.core.models.license import LicenseRecord
 from app.core.models.production_task import ProductionTask
 from app.core.models.prompt import PromptTemplate
@@ -33,6 +34,7 @@ __all__ = [
     "CharacterReference",
     "CharacterVersion",
     "Episode",
+    "GenerationJob",
     "LicenseRecord",
     "ProductionTask",
     "PromptTemplate",

@@ -12,6 +12,7 @@ from app.core.models import Asset, Character
 from app.core.services.approval_service import ApprovalService
 from app.core.services.character_version_service import CharacterVersionService
 from app.core.services.exceptions import (
+    CharacterLockIncompleteError,
     ConflictError,
     InvalidTransitionError,
     NotFoundError,
@@ -41,6 +42,41 @@ def _approved_image_asset(session: Session, **overrides) -> Asset:
     return asset
 
 
+_LOCK_FIELDS = {
+    "visual_summary": "Two ponytails, denim dress.",
+    "master_prompt": "Melissa: 6yo girl...",
+    "negative_prompt": "no extra characters",
+    "color_palette": ["denim blue", "red"],
+    "relative_height": "taller than Bilsan",
+}
+
+
+def _approve_with_complete_lock(
+    session: Session, cvs: CharacterVersionService, character: Character, version_id: uuid.UUID
+) -> None:
+    """Give ``version_id`` a complete Character Lock, then submit + approve it.
+
+    Shared by every test that needs an ``approved_canon`` version to
+    exist as setup, now that :meth:`CharacterVersionService.approve_character_version`
+    enforces lock completeness — see ``test_approve_character_version_*``
+    below for the tests of that enforcement itself.
+    """
+    cvs.update_character_version(session, version_id, **_LOCK_FIELDS)
+    # relative_path and checksum are both unique on Asset — derive both
+    # from version_id so this helper is safe to call more than once per
+    # test (e.g. once per version being approved).
+    asset = _approved_image_asset(
+        session,
+        relative_path=f"characters/{character.slug}/versions/{version_id}/ref.png",
+        checksum=uuid.uuid5(uuid.NAMESPACE_URL, str(version_id)).hex.ljust(64, "0"),
+    )
+    cvs.add_character_reference(
+        session, character_id=character.id, character_version_id=version_id, asset_id=asset.id
+    )
+    cvs.submit_character_version_for_review(session, version_id)
+    cvs.approve_character_version(session, version_id, decided_by="founder")
+
+
 def test_create_character_version_auto_numbers(session: Session) -> None:
     cvs = CharacterVersionService()
     character = _character(session)
@@ -62,8 +98,7 @@ def test_update_character_version_rejected_once_approved(session: Session) -> No
     cvs = CharacterVersionService()
     character = _character(session)
     version = cvs.create_character_version(session, character.id)
-    cvs.submit_character_version_for_review(session, version.id)
-    cvs.approve_character_version(session, version.id, decided_by="founder")
+    _approve_with_complete_lock(session, cvs, character, version.id)
 
     with pytest.raises(InvalidTransitionError):
         cvs.update_character_version(session, version.id, visual_summary="changed")
@@ -125,14 +160,12 @@ def test_set_active_character_version_switches_transactionally_and_keeps_history
     character = _character(session)
 
     v1 = cvs.create_character_version(session, character.id)
-    cvs.submit_character_version_for_review(session, v1.id)
-    cvs.approve_character_version(session, v1.id, decided_by="founder")
+    _approve_with_complete_lock(session, cvs, character, v1.id)
     cvs.set_active_character_version(session, character.id, v1.id)
     assert character.active_version_id == v1.id
 
     v2 = cvs.create_character_version(session, character.id)
-    cvs.submit_character_version_for_review(session, v2.id)
-    cvs.approve_character_version(session, v2.id, decided_by="founder")
+    _approve_with_complete_lock(session, cvs, character, v2.id)
     cvs.set_active_character_version(session, character.id, v2.id)
 
     assert character.active_version_id == v2.id
@@ -151,8 +184,7 @@ def test_set_active_character_version_rejects_version_from_other_character(
     session.flush()
 
     bilsan_version = cvs.create_character_version(session, bilsan.id)
-    cvs.submit_character_version_for_review(session, bilsan_version.id)
-    cvs.approve_character_version(session, bilsan_version.id)
+    _approve_with_complete_lock(session, cvs, bilsan, bilsan_version.id)
 
     with pytest.raises(ValidationError):
         cvs.set_active_character_version(session, melissa.id, bilsan_version.id)
@@ -249,3 +281,73 @@ def test_validate_character_lock_complete_when_all_fields_and_reference_present(
     result = cvs.validate_character_lock(session, version.id)
     assert result.is_complete is True
     assert result.missing_fields == []
+
+
+def test_validate_prompt_completeness_ignores_reference_requirement(session: Session) -> None:
+    """Unlike validate_character_lock, this narrower check never requires
+    an approved reference asset — see its docstring for why (avoiding a
+    chicken-and-egg block on the very workflow that produces a
+    version's first reference image)."""
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id, **_LOCK_FIELDS)
+
+    result = cvs.validate_prompt_completeness(session, version.id)
+
+    assert result.is_complete is True
+    assert result.missing_fields == []
+
+
+def test_validate_prompt_completeness_reports_missing_prompt_fields(session: Session) -> None:
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)  # everything empty
+
+    result = cvs.validate_prompt_completeness(session, version.id)
+
+    assert result.is_complete is False
+    assert set(result.missing_fields) == {
+        "visual_summary",
+        "master_prompt",
+        "negative_prompt",
+        "color_palette",
+        "relative_height",
+    }
+    assert "approved_reference_assets" not in result.missing_fields
+
+
+def test_approve_character_version_rejects_incomplete_lock(session: Session) -> None:
+    """A version with complete prompt fields but no reference asset yet
+    still cannot become approved_canon — approval requires the *full*
+    Character Lock, not just prompt completeness."""
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id, **_LOCK_FIELDS)
+    cvs.submit_character_version_for_review(session, version.id)
+
+    with pytest.raises(CharacterLockIncompleteError) as exc_info:
+        cvs.approve_character_version(session, version.id, decided_by="founder")
+
+    assert exc_info.value.missing_fields == ["approved_reference_assets"]
+    assert version.status == CharacterVersionStatus.IN_REVIEW  # unchanged
+
+
+def test_approve_character_version_rejects_missing_prompt_fields_too(session: Session) -> None:
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)  # everything empty
+    cvs.submit_character_version_for_review(session, version.id)
+
+    with pytest.raises(CharacterLockIncompleteError) as exc_info:
+        cvs.approve_character_version(session, version.id, decided_by="founder")
+
+    assert "master_prompt" in exc_info.value.missing_fields
+    assert "approved_reference_assets" in exc_info.value.missing_fields
+
+
+def test_approve_character_version_succeeds_with_complete_lock(session: Session) -> None:
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)
+    _approve_with_complete_lock(session, cvs, character, version.id)
+    assert version.status == CharacterVersionStatus.APPROVED_CANON

@@ -18,6 +18,7 @@ dependencies = [
     "pillow>=10.2",
     "python-bidi>=0.4",
     "arabic-reshaper>=3.0",
+    "google-genai>=1.0",
 ]
 
 [project.scripts]

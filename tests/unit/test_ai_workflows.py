@@ -25,7 +25,7 @@ from app.core.ai.workflows.voice_line_workflow import VoiceLineWorkflow
 from app.core.db.enums import ApprovalStatus, AssetType, PromptCategory, PromptType
 from app.core.models import Character, CharacterVersion, Episode, PromptTemplate, Scene
 from app.core.services.asset_import_service import AssetImportService
-from app.core.services.exceptions import ValidationError
+from app.core.services.exceptions import CharacterLockIncompleteError, ValidationError
 from app.core.services.prompt_template_service import PromptTemplateService
 from app.core.services.storage_service import StorageService
 
@@ -50,16 +50,21 @@ def _scene(session: Session, episode: Episode) -> Scene:
     return scene
 
 
-def _character_version(session: Session) -> CharacterVersion:
+def _character_version(session: Session, **overrides: object) -> CharacterVersion:
     character = Character(slug="melissa", name_ar="ميليسا", name_en="Melissa")
     session.add(character)
     session.flush()
-    version = CharacterVersion(
-        character_id=character.id,
-        version_number="v01",
-        master_prompt="a young girl",
-        color_palette=["#ffcc00"],
-    )
+    defaults: dict[str, object] = {
+        "character_id": character.id,
+        "version_number": "v01",
+        "master_prompt": "a young girl",
+        "visual_summary": "Two ponytails, denim dress.",
+        "negative_prompt": "no extra characters",
+        "color_palette": ["#ffcc00"],
+        "relative_height": "taller than Bilsan",
+    }
+    defaults.update(overrides)
+    version = CharacterVersion(**defaults)
     session.add(version)
     session.flush()
     return version
@@ -121,6 +126,38 @@ def test_character_reference_workflow_requires_character_version(
 
     with pytest.raises(ValidationError, match="character_version_id"):
         workflow.run(ctx)
+
+
+def test_character_reference_workflow_rejects_incomplete_character_lock(
+    session: Session, app_config: AppConfig
+) -> None:
+    """Production-generation policy (Milestone 7): a CharacterVersion
+    missing required prompt fields must never be used for generation —
+    enforced identically for MockProvider as for any real provider, per
+    the founder's "production rules belong to the workflow/domain, not
+    the provider" requirement."""
+    version = _character_version(session, visual_summary=None, negative_prompt=None)
+    template = _template(
+        session,
+        name="char_ref_incomplete",
+        category=PromptCategory.CHARACTER,
+        prompt_type=PromptType.IMAGE,
+        text_en="A picture of {{ character_master_prompt }}.",
+    )
+    workflow = CharacterReferenceWorkflow(
+        prompt_engine=PromptEngine(), asset_import=_asset_import(app_config)
+    )
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        prompt_template_id=template.id,
+        character_version_id=version.id,
+    )
+
+    with pytest.raises(CharacterLockIncompleteError) as exc_info:
+        workflow.run(ctx)
+
+    assert set(exc_info.value.missing_fields) == {"visual_summary", "negative_prompt"}
 
 
 # --- SceneImageWorkflow -------------------------------------------------

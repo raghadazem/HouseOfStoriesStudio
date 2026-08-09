@@ -19,6 +19,7 @@ from app.core.db.enums import ApprovalStatus, AssetType, CharacterVersionStatus
 from app.core.models import Asset, Character, CharacterReference, CharacterVersion
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import (
+    CharacterLockIncompleteError,
     ConflictError,
     InvalidTransitionError,
     NotFoundError,
@@ -43,6 +44,22 @@ _REQUIRED_LOCK_FIELDS = (
     "color_palette",
     "relative_height",
 )
+
+
+@dataclass(frozen=True)
+class PromptCompletenessResult:
+    """Result of :meth:`CharacterVersionService.validate_prompt_completeness`.
+
+    A narrower check than :class:`CharacterLockValidationResult`: only
+    the fields that feed a generation prompt, not the approved-reference
+    requirement. Deliberately reused as a component of the full
+    Character Lock check rather than a duplicate rule set — see that
+    method's docstring for why the two must stay separate.
+    """
+
+    character_version_id: uuid.UUID
+    is_complete: bool
+    missing_fields: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -160,10 +177,27 @@ class CharacterVersionService:
         decided_by: str | None = None,
         notes: str | None = None,
     ) -> CharacterVersion:
+        """Approve an in-review version, promoting it to ``approved_canon``.
+
+        Raises:
+            InvalidTransitionError: The version isn't ``in_review``.
+            CharacterLockIncompleteError: The Character Lock isn't
+                complete (see :meth:`validate_character_lock`) —
+                production generation must never silently consume an
+                unfinished design, so a version cannot become canon
+                until its lock is whole.
+        """
         version = self._get(session, version_id)
         if version.status != CharacterVersionStatus.IN_REVIEW:
             raise InvalidTransitionError(
                 f"Only an in-review version can be approved (current: {version.status.value})."
+            )
+        lock_result = self.validate_character_lock(session, version_id)
+        if not lock_result.is_complete:
+            raise CharacterLockIncompleteError(
+                f"CharacterVersion {version_id} cannot become approved_canon: "
+                f"Character Lock is incomplete, missing {lock_result.missing_fields}.",
+                missing_fields=lock_result.missing_fields,
             )
         version.status = CharacterVersionStatus.APPROVED_CANON
         version.decided_at = datetime.now(UTC)
@@ -221,6 +255,12 @@ class CharacterVersionService:
             NotFoundError: Character or version doesn't exist.
             ValidationError: The version doesn't belong to this character.
             InvalidTransitionError: The version isn't ``approved_canon``.
+
+        Note: no separate Character Lock completeness check is needed
+        here — ``approved_canon`` is itself only reachable through
+        :meth:`approve_character_version`, which already requires a
+        complete lock, so requiring that status transitively guarantees
+        an active version's lock is complete too.
         """
         character = session.get(Character, character_id)
         if character is None:
@@ -317,21 +357,45 @@ class CharacterVersionService:
             query = query.filter_by(character_version_id=version_id)
         return query.all()
 
+    def validate_prompt_completeness(
+        self, session: Session, version_id: uuid.UUID
+    ) -> PromptCompletenessResult:
+        """Report every prompt-relevant field still missing on this version.
+
+        This is the *single source of truth* for "does this version have
+        enough authored design data to be worth spending a real,
+        paid generation call on" — deliberately narrower than
+        :meth:`validate_character_lock`, which additionally requires an
+        already-approved reference asset. That requirement would make
+        this specific check circular for the very workflow that
+        produces a version's first reference image: you cannot require
+        an approved reference to exist before generating the reference
+        that would become one. See
+        ``app.core.ai.workflows.character_reference_workflow`` for where
+        this is enforced.
+        """
+        version = self._get(session, version_id)
+        missing = [attr for attr in _REQUIRED_LOCK_FIELDS if not getattr(version, attr)]
+        return PromptCompletenessResult(
+            character_version_id=version_id,
+            is_complete=not missing,
+            missing_fields=missing,
+        )
+
     def validate_character_lock(
         self, session: Session, version_id: uuid.UUID
     ) -> CharacterLockValidationResult:
         """Report every Character Lock field still missing on this version.
 
-        Checks all founder-approved required fields, not just the first
-        failure, so the caller can show a complete checklist rather than
-        one error at a time.
+        Composes :meth:`validate_prompt_completeness` (the single source
+        of truth for the prompt-relevant fields) with the one additional
+        requirement full lock completeness needs: at least one approved
+        reference asset already linked. Checks everything, not just the
+        first failure, so the caller can show a complete checklist
+        rather than one error at a time.
         """
-        version = self._get(session, version_id)
-        missing: list[str] = []
-        for attribute in _REQUIRED_LOCK_FIELDS:
-            value = getattr(version, attribute)
-            if not value:
-                missing.append(attribute)
+        prompt_result = self.validate_prompt_completeness(session, version_id)
+        missing = list(prompt_result.missing_fields)
 
         has_reference = (
             session.query(CharacterReference).filter_by(character_version_id=version_id).count()

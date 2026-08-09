@@ -87,6 +87,20 @@ def test_episode_readiness_success_when_everything_is_satisfied(session: Session
         color_palette=["denim blue"],
         relative_height="taller than Bilsan",
     )
+    # Character Lock also requires at least one approved reference asset
+    # (see CharacterVersionService.validate_character_lock) before a
+    # version can become approved_canon.
+    reference_asset = _approved_asset(
+        session,
+        episode_id=None,
+        role=None,
+        asset_type=AssetType.IMAGE,
+        relative_path="characters/melissa/versions/v01/ref_front.png",
+        character_version_id=version.id,
+    )
+    cvs.add_character_reference(
+        session, character_id=melissa.id, character_version_id=version.id, asset_id=reference_asset.id
+    )
     cvs.submit_character_version_for_review(session, version.id)
     cvs.approve_character_version(session, version.id, decided_by="founder")
     cvs.set_active_character_version(session, melissa.id, version.id)

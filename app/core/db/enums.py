@@ -133,6 +133,24 @@ class StageState(str, enum.Enum):
     COMPLETED = "completed"
 
 
+class GenerationJobStatus(str, enum.Enum):
+    """Lifecycle state of one real (or mock) AI generation attempt.
+
+    Owned exclusively by
+    :class:`~app.core.ai.generation_job_service.GenerationJobService` —
+    see that module's docstring for the full transition diagram and the
+    honest-cancellation reasoning behind ``CANCEL_REQUESTED`` existing
+    as a distinct state from ``CANCELLED``.
+    """
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCEL_REQUESTED = "cancel_requested"
+    CANCELLED = "cancelled"
+
+
 class PromptCategory(str, enum.Enum):
     """Which stage of production a prompt belongs to.
 

@@ -1,16 +1,17 @@
 """CharactersPage — browse, search, and create characters.
 
-Character *design* (Character Lock — versions, master prompts, canon
-approval) is a separate, much larger workflow owned by
-``CharacterVersionService``; this page covers the identity-level CRUD
-``CharacterService`` already provides plus a read-only view of each
-character's version history — creating/approving a new version is a
-big enough workflow of its own to stay out of this pass's scope (see
-``docs/25_MILESTONE_4B_STATUS.md``).
+Also hosts the Character *design* workflow (Character Lock — creating/
+editing draft versions, real AI reference generation, review/approval,
+and activation), delegated to
+:mod:`app.gui.pages.character_version_workflow` — this page owns the
+roster grid and the character-identity CRUD ``CharacterService``
+provides; the version detail dialog opened from here is where a
+version's own lifecycle (owned by ``CharacterVersionService``) lives.
 """
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
 from PySide6.QtCore import Qt
@@ -21,6 +22,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QVBoxLayout,
@@ -32,11 +34,16 @@ from app.core.models import Character
 from app.core.naming import slugify
 from app.core.services.exceptions import ConflictError, ValidationError
 from app.gui.context import ApplicationContext
+from app.gui.pages.character_version_workflow import (
+    create_character_version,
+    open_character_version_detail,
+)
 from app.gui.theme.manager import ThemeManager
 from app.gui.theme.tokens import METRICS
 from app.gui.widgets import (
     EmptyState,
     EntityCard,
+    EntityRow,
     ErrorState,
     FormDialog,
     LoadingOverlay,
@@ -112,13 +119,63 @@ class _CreateCharacterDialog(FormDialog):
 
 
 class _CharacterDetailDialog(FormDialog):
-    def __init__(self, character: Character, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        ctx: ApplicationContext,
+        theme: ThemeManager,
+        character: Character,
+        parent: QWidget | None = None,
+        *,
+        on_feedback: Callable[[str, str], None] | None = None,
+    ) -> None:
         super().__init__(character.name_en, show_save=False, min_width=480, parent=parent)
+        self._ctx = ctx
+        self._theme = theme
+        self._character_id = character.id
+        self._on_feedback = on_feedback
+        self.needs_refresh = False
 
         name_ar_field = QLineEdit(character.name_ar)
         name_ar_field.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
         name_ar_field.setReadOnly(True)
         self.add_row("Name (Arabic)", name_ar_field)
+
+        self._status_wrap = QWidget()
+        self.add_row("Status", self._status_wrap)
+
+        if character.traits:
+            traits_field = QLineEdit(", ".join(character.traits))
+            traits_field.setReadOnly(True)
+            self.add_row("Traits", traits_field)
+
+        versions_header = QHBoxLayout()
+        versions_header.addWidget(QLabel("Design versions"))
+        versions_header.addStretch(1)
+        new_version_btn = QPushButton("+ New Version")
+        new_version_btn.clicked.connect(self._on_new_version)
+        versions_header.addWidget(new_version_btn)
+        header_wrap = QWidget()
+        header_wrap.setLayout(versions_header)
+        self.content_layout.addWidget(header_wrap)
+
+        self._versions_panel = QFrame()
+        self._versions_panel.setProperty("class", "card")
+        self._versions_layout = QVBoxLayout(self._versions_panel)
+        self._versions_layout.setContentsMargins(
+            METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md
+        )
+        self._versions_layout.setSpacing(METRICS.spacing_xs)
+        self.content_layout.addWidget(self._versions_panel)
+
+        self._render_versions(character)
+
+    def _render_versions(self, character: Character) -> None:
+        while self._versions_layout.count():
+            item = self._versions_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
 
         meta_row = QHBoxLayout()
         if character.role:
@@ -130,41 +187,50 @@ class _CharacterDetailDialog(FormDialog):
                         "success" if character.active_version_id else "warning")
         )
         meta_row.addStretch(1)
-        meta_wrap = QWidget()
-        meta_wrap.setLayout(meta_row)
-        self.add_row("Status", meta_wrap)
+        for i in reversed(range(self._status_wrap.layout().count() if self._status_wrap.layout() else 0)):
+            self._status_wrap.layout().takeAt(i)
+        self._status_wrap.setLayout(meta_row)
 
-        if character.traits:
-            traits_field = QLineEdit(", ".join(character.traits))
-            traits_field.setReadOnly(True)
-            self.add_row("Traits", traits_field)
-
-        versions_panel = QFrame()
-        versions_panel.setProperty("class", "card")
-        versions_layout = QVBoxLayout(versions_panel)
-        versions_layout.setContentsMargins(
-            METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md
-        )
-        versions_layout.setSpacing(METRICS.spacing_xs)
         if character.versions:
             for version in sorted(character.versions, key=lambda v: v.version_number, reverse=True):
-                row = QHBoxLayout()
                 is_active = version.id == character.active_version_id
-                label = QLabel(f"{version.version_number}" + ("  ★ active" if is_active else ""))
-                row.addWidget(label)
-                row.addStretch(1)
-                row.addWidget(
+                row = EntityRow(
+                    "🎨",
+                    f"{version.version_number}" + ("  ★ active" if is_active else ""),
+                )
+                row.add_trailing_widget(
                     StatusBadge(
                         version.status.value.replace("_", " ").title(),
                         _VERSION_STATUS_VARIANT.get(version.status.value, "neutral"),
                     )
                 )
-                row_wrap = QWidget()
-                row_wrap.setLayout(row)
-                versions_layout.addWidget(row_wrap)
+                row.clicked.connect(lambda _checked=False, v=version.id: self._on_manage_version(v))
+                self._versions_layout.addWidget(row)
         else:
-            versions_layout.addWidget(EmptyState("No design versions yet.", icon="🎨"))
-        self.add_row("Design versions", versions_panel)
+            self._versions_layout.addWidget(EmptyState("No design versions yet.", icon="🎨"))
+
+    def _reload(self) -> None:
+        with self._ctx.open_session() as session:
+            character = self._ctx.character_service.get_character(session, self._character_id)
+            self._render_versions(character)
+
+    def _on_new_version(self) -> None:
+        version_id = create_character_version(self._ctx, self._character_id, self)
+        if version_id is None:
+            return
+        self.needs_refresh = True
+        self._reload()
+        if self._on_feedback:
+            self._on_feedback("New design version created.", "success")
+        self._on_manage_version(version_id)
+
+    def _on_manage_version(self, version_id: uuid.UUID) -> None:
+        refreshed = open_character_version_detail(
+            self._ctx, self._theme, self._character_id, version_id, self, on_feedback=self._on_feedback
+        )
+        if refreshed:
+            self.needs_refresh = True
+            self._reload()
 
 
 class CharactersPage(QWidget):
@@ -324,11 +390,15 @@ class CharactersPage(QWidget):
         try:
             with self._ctx.open_session() as session:
                 fresh = self._ctx.character_service.get_character(session, character.id)
-                dialog = _CharacterDetailDialog(fresh, parent=self)
+                dialog = _CharacterDetailDialog(
+                    self._ctx, self._theme, fresh, parent=self, on_feedback=self._on_feedback
+                )
         except OperationalError:
             self._show_error_state()
             return
         dialog.exec()
+        if dialog.needs_refresh:
+            self.refresh()
 
     def _on_create_character(self) -> None:
         existing_slugs = {character.slug for character in self._characters}

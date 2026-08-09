@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from app import __version__
+from app.core.ai.providers.gemini_provider import DEFAULT_MODEL, ENV_API_KEY, ENV_MODEL
 from app.gui.context import ApplicationContext
 from app.gui.settings import AppSettings
 from app.gui.theme.manager import ThemeManager
@@ -85,6 +86,7 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_appearance_section())
         layout.addWidget(self._build_workspace_section())
         layout.addWidget(self._build_providers_section())
+        layout.addWidget(self._build_gemini_section())
         layout.addWidget(self._build_about_section())
         layout.addStretch(1)
 
@@ -166,6 +168,39 @@ class SettingsPage(QWidget):
             text = ", ".join(providers) if providers else "Not configured"
             variant = "success" if providers else "neutral"
             layout.addWidget(self._info_row(label, text, badge_variant=variant))
+        return card
+
+    # --- Google Gemini Image ------------------------------------------------------
+
+    def _build_gemini_section(self) -> QFrame:
+        """Model/configuration status only — never the secret itself.
+
+        The API key lives in the ``GEMINI_API_KEY`` environment
+        variable (never the database, source, tests, or QSettings) per
+        the founder's Milestone 7 secrets policy; this section shows
+        whether one is present and which model is configured, with no
+        editable secret field and no way to display the key's value.
+        """
+        card, layout = _section_card(
+            "Google Gemini Image", "Real AI character-reference generation"
+        )
+        provider = self._ctx.ai_orchestrator.get_provider("gemini")
+        configured = provider.is_configured()
+        layout.addWidget(
+            self._info_row(
+                "Status",
+                "Configured" if configured else "Not configured",
+                badge_variant="success" if configured else "neutral",
+            )
+        )
+        layout.addWidget(self._info_row("Model", provider.model))
+        guidance = QLabel(
+            f"Set the {ENV_API_KEY} environment variable to configure. Optionally set "
+            f"{ENV_MODEL} to override the model (defaults to {DEFAULT_MODEL})."
+        )
+        guidance.setProperty("class", "muted")
+        guidance.setWordWrap(True)
+        layout.addWidget(guidance)
         return card
 
     # --- About ------------------------------------------------------------------

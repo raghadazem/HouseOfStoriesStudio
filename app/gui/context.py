@@ -23,7 +23,15 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import AppConfig, get_config
+from app.core.ai.generation_job_service import GenerationJobService
 from app.core.ai.orchestrator import AIOrchestrator
+from app.core.ai.workflows import (
+    CharacterReferenceWorkflow,
+    SceneImageWorkflow,
+    ThumbnailWorkflow,
+    VoiceLineWorkflow,
+    Workflow,
+)
 from app.core.db.engine import create_db_engine, create_session_factory
 from app.core.services.approval_service import ApprovalService
 from app.core.services.asset_import_service import AssetImportService
@@ -151,7 +159,43 @@ class ApplicationContext:
 
     @cached_property
     def ai_orchestrator(self) -> AIOrchestrator:
-        return AIOrchestrator()
+        """An orchestrator whose workflows import into *this* context's storage.
+
+        Every real ``Workflow`` (``CharacterReferenceWorkflow`` and
+        friends) defaults its ``AssetImportService`` to the process-wide
+        cached ``get_config()`` when none is given — correct for the
+        CLI/tests, which bind that cache explicitly, but wrong here: the
+        GUI's own ``AppConfig`` (``self.config``, already used by every
+        other service on this context) must be what generated files are
+        imported against, not whatever config happened to be cached
+        first in this process. Each workflow class is rebound with a
+        zero-arg ``__init__`` (the shape ``AIOrchestrator``'s registry
+        requires) that supplies this context's own
+        ``asset_import_service``.
+        """
+        asset_import = self.asset_import_service
+
+        def _bind(workflow_cls: type[Workflow]) -> type[Workflow]:
+            return type(
+                workflow_cls.__name__,
+                (workflow_cls,),
+                {"__init__": lambda self: workflow_cls.__init__(self, asset_import=asset_import)},
+            )
+
+        workflow_registry = {
+            cls.name: _bind(cls)
+            for cls in (
+                CharacterReferenceWorkflow,
+                SceneImageWorkflow,
+                ThumbnailWorkflow,
+                VoiceLineWorkflow,
+            )
+        }
+        return AIOrchestrator(workflow_registry=workflow_registry)
+
+    @cached_property
+    def generation_job_service(self) -> GenerationJobService:
+        return GenerationJobService()
 
     def dispose(self) -> None:
         """Release the database engine's connections (called on app exit)."""
