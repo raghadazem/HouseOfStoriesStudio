@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import uuid
+
 import pytest
 from sqlalchemy.orm import Session
 
-from app.core.db.enums import ApprovalStatus, AssetType
-from app.core.models import Asset, Episode
-from app.core.services.exceptions import ConflictError, ValidationError
+from app.core.db.enums import ApprovalDecision, ApprovalStatus, AssetType
+from app.core.models import Asset, Character, Episode
+from app.core.services.approval_service import ApprovalService
+from app.core.services.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.services.prompt_composer_service import ComposedPrompt
 from app.core.services.scene_service import SceneService
 from app.core.services.short_service import ShortService
 
@@ -172,3 +176,112 @@ def test_validate_scene_sequence_detects_gap(session: Session) -> None:
     result = ss.validate_scene_sequence(session, episode.id)
     assert result.is_valid is False
     assert result.issues
+
+
+# --- Episode Workspace additions: title/camera/prompt fields, cast, approval ---
+
+
+def test_update_scene_accepts_new_workspace_fields(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    updated = ss.update_scene(
+        session,
+        scene.id,
+        title="The Turtle Appears",
+        camera_direction="Wide establishing shot",
+        prompt_text="a turtle on a riverbank",
+        negative_prompt_text="blurry, low quality",
+    )
+    assert updated.title == "The Turtle Appears"
+    assert updated.camera_direction == "Wide establishing shot"
+    assert updated.prompt_text == "a turtle on a riverbank"
+    assert updated.negative_prompt_text == "blurry, low quality"
+
+
+def test_add_scene_accepts_title_and_camera_direction(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, title="Opening", camera_direction="Close-up")
+    assert scene.title == "Opening"
+    assert scene.camera_direction == "Close-up"
+
+
+def test_duplicate_scene_copies_new_fields_too(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    original = ss.add_scene(session, episode.id, title="Original", camera_direction="Pan left")
+    ss.update_scene(session, original.id, prompt_text="p", negative_prompt_text="np")
+
+    duplicate = ss.duplicate_scene(session, original.id)
+
+    assert duplicate.title == "Original"
+    assert duplicate.camera_direction == "Pan left"
+    assert duplicate.prompt_text == "p"
+    assert duplicate.negative_prompt_text == "np"
+
+
+def test_set_scene_characters_replaces_cast(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    melissa = Character(slug="melissa", name_ar="ميليسا", name_en="Melissa")
+    bilsan = Character(slug="bilsan", name_ar="بيلسان", name_en="Bilsan")
+    session.add_all([melissa, bilsan])
+    session.flush()
+
+    ss.set_scene_characters(session, scene.id, [melissa.id])
+    assert [c.slug for c in scene.characters_present] == ["melissa"]
+
+    ss.set_scene_characters(session, scene.id, [melissa.id, bilsan.id])
+    assert {c.slug for c in scene.characters_present} == {"melissa", "bilsan"}
+
+    ss.set_scene_characters(session, scene.id, [])
+    assert scene.characters_present == []
+
+
+def test_set_scene_characters_rejects_unknown_character(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    with pytest.raises(NotFoundError):
+        ss.set_scene_characters(session, scene.id, [uuid.uuid4()])
+
+
+def test_approve_reject_request_changes_scene_records_history(session: Session) -> None:
+    ss = SceneService()
+    approvals = ApprovalService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+
+    ss.approve_scene(session, scene.id, decided_by="founder")
+    assert (
+        approvals.get_current_approval_state(session, "scene", scene.id)
+        == ApprovalDecision.APPROVED
+    )
+
+    ss.request_scene_changes(session, scene.id, notes="camera direction unclear")
+    assert (
+        approvals.get_current_approval_state(session, "scene", scene.id)
+        == ApprovalDecision.NEEDS_CHANGES
+    )
+
+    ss.reject_scene(session, scene.id, notes="doesn't match the script")
+    assert (
+        approvals.get_current_approval_state(session, "scene", scene.id)
+        == ApprovalDecision.REJECTED
+    )
+
+
+def test_generate_and_store_prompt_persists_composer_output(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, description="A turtle on a riverbank")
+
+    class _FakeComposer:
+        def compose_scene_prompt(self, session, scene_id):
+            return ComposedPrompt(prompt_text="composed prompt", negative_prompt_text="composed negative")
+
+    updated = ss.generate_and_store_prompt(session, scene.id, composer=_FakeComposer())
+    assert updated.prompt_text == "composed prompt"
+    assert updated.negative_prompt_text == "composed negative"

@@ -28,7 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.core.db.enums import PipelineStage, ShortStatus
+from app.core.db.enums import PipelineStage, ScriptStatus, ShortStatus
 
 if TYPE_CHECKING:
     from app.core.models.asset import Asset
@@ -109,9 +109,45 @@ class Episode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         order_by="Short.short_index",
     )
     characters_featured: Mapped[list[Character]] = relationship(secondary=episode_characters)
+    script: Mapped[Script | None] = relationship(
+        back_populates="episode", cascade="all, delete-orphan", uselist=False
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"<Episode #{self.number} {self.slug!r}>"
+
+
+class Script(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """The Episode Workspace's Script stage — one per Episode.
+
+    Deliberately does not duplicate ``Episode.title_ar``/``title_en``/
+    ``lesson``/``dialogue_language``: those already exist on ``Episode``
+    and the Script tab reads/writes them there via
+    ``EpisodeService.update_episode``. ``status`` follows the same
+    draft/reviewed split as ``CharacterVersionStatus``: DRAFT->READY is
+    a plain self-transition, READY->APPROVED (or back to DRAFT) is
+    recorded via :class:`~app.core.models.approval.ApprovalRecord` — see
+    ``ScriptService``.
+    """
+
+    __tablename__ = "scripts"
+
+    episode_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("episodes.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    full_script: Mapped[str | None] = mapped_column(Text, nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[ScriptStatus] = mapped_column(
+        Enum(ScriptStatus, native_enum=False, length=32),
+        default=ScriptStatus.DRAFT,
+        nullable=False,
+    )
+
+    episode: Mapped[Episode] = relationship(back_populates="script")
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return f"<Script episode={self.episode_id} status={self.status.value}>"
 
 
 class Scene(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -126,9 +162,17 @@ class Scene(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("episodes.id", ondelete="CASCADE"), nullable=False
     )
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str | None] = mapped_column(String(256), nullable=True)
     location: Mapped[str | None] = mapped_column(String(128), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     dialogue_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    camera_direction: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Prompt Composer output (PromptComposerService.compose_scene_prompt) —
+    # stored so it survives without regenerating, and freely hand-editable
+    # afterward via SceneService.update_scene. Never sent to an AI
+    # provider by anything in this milestone.
+    prompt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    negative_prompt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Founder-estimated (not auto-derived) length of this scene, used by
     # SceneService.calculate_total_scene_duration. Nullable: most scenes
     # won't have a duration estimate until later in production.
@@ -139,6 +183,7 @@ class Scene(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     source_for_shorts: Mapped[list[Short]] = relationship(
         secondary=short_scenes, back_populates="source_scenes"
     )
+    assets: Mapped[list[Asset]] = relationship(back_populates="scene")
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"<Scene episode={self.episode_id} #{self.order_index}>"

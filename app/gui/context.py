@@ -34,8 +34,10 @@ from app.core.services.export_package_service import ExportPackageService
 from app.core.services.license_service import LicenseService
 from app.core.services.production_checklist_service import ProductionChecklistService
 from app.core.services.production_task_service import ProductionTaskService
+from app.core.services.prompt_composer_service import PromptComposerService
 from app.core.services.prompt_template_service import PromptTemplateService
 from app.core.services.scene_service import SceneService
+from app.core.services.script_service import ScriptService
 from app.core.services.short_service import ShortService
 from app.core.services.storage_service import StorageService
 from app.core.services.unit_of_work import session_scope as _service_session_scope
@@ -93,6 +95,14 @@ class ApplicationContext:
     @cached_property
     def short_service(self) -> ShortService:
         return ShortService()
+
+    @cached_property
+    def script_service(self) -> ScriptService:
+        return ScriptService()
+
+    @cached_property
+    def prompt_composer_service(self) -> PromptComposerService:
+        return PromptComposerService()
 
     @cached_property
     def character_service(self) -> CharacterService:

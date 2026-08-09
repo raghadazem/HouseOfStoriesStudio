@@ -101,7 +101,7 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     character_version: Mapped[CharacterVersion | None] = relationship()
     episode: Mapped[Episode | None] = relationship()
-    scene: Mapped[Scene | None] = relationship()
+    scene: Mapped[Scene | None] = relationship(back_populates="assets")
     short: Mapped[Short | None] = relationship(foreign_keys=[short_id])
 
     @validates("relative_path")

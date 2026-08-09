@@ -14,6 +14,7 @@ from app.core.models.character import Character, CharacterReference, CharacterVe
 from app.core.models.episode import (
     Episode,
     Scene,
+    Script,
     Short,
     episode_characters,
     scene_characters,
@@ -35,6 +36,7 @@ __all__ = [
     "ProductionTask",
     "PromptTemplate",
     "Scene",
+    "Script",
     "Short",
     "episode_characters",
     "scene_characters",

@@ -29,6 +29,7 @@ from app.gui.widgets.placeholder_page import PlaceholderPage
 from app.gui.widgets.progress_stepper import ProgressStepper
 from app.gui.widgets.relative_time import age_label
 from app.gui.widgets.responsive_grid import ResponsiveGrid
+from app.gui.widgets.scene_card import SceneCard
 from app.gui.widgets.search_box import SearchBox
 from app.gui.widgets.section_header import SectionHeader
 from app.gui.widgets.status_badge import StatusBadge
@@ -53,6 +54,7 @@ __all__ = [
     "PlaceholderPage",
     "ProgressStepper",
     "ResponsiveGrid",
+    "SceneCard",
     "SearchBox",
     "SectionHeader",
     "StatusBadge",

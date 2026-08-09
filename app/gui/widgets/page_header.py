@@ -92,6 +92,9 @@ class PageHeader(QWidget):
                 self._inner.addWidget(self._primary_button)
         self._root.addLayout(self._inner)
 
+    def set_title(self, title: str) -> None:
+        self._title_label.setText(title)
+
     def set_subtitle(self, subtitle: str) -> None:
         if self._subtitle_label is not None:
             self._subtitle_label.setText(subtitle)

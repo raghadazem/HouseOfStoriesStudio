@@ -98,6 +98,41 @@ class ApprovalDecision(str, enum.Enum):
     NEEDS_CHANGES = "needs_changes"
 
 
+class ScriptStatus(str, enum.Enum):
+    """Lifecycle of an episode's :class:`~app.core.models.episode.Script`.
+
+    Mirrors :class:`CharacterVersionStatus`'s shape: a plain, linear
+    status the author moves through themselves (``DRAFT`` -> ``READY``),
+    then a reviewed transition into ``APPROVED`` recorded via
+    :class:`~app.core.models.approval.ApprovalRecord` (see
+    ``ScriptService.approve_script``) — the same split
+    ``CharacterVersionService`` already uses for character locks.
+    """
+
+    DRAFT = "draft"
+    READY = "ready"
+    APPROVED = "approved"
+
+
+class StageState(str, enum.Enum):
+    """A workspace stage's own completion state (Episode Workspace).
+
+    Distinct from :class:`PipelineStage` (the episode's single overall
+    position) — this is the per-stage summary
+    ``ProductionChecklistService.evaluate_stage_summary`` computes for
+    each of the workspace's 8 stages (script/storyboard/images/voice/
+    music/video/seo/export), re-bucketing existing
+    :class:`~app.core.services.production_checklist_service.CheckResult`
+    data rather than storing anything new.
+    """
+
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    READY = "ready"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+
+
 class PromptCategory(str, enum.Enum):
     """Which stage of production a prompt belongs to.
 

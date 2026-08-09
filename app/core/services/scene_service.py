@@ -15,12 +15,18 @@ from sqlalchemy.orm import Session
 
 from app.core.db.enums import ApprovalStatus
 from app.core.models import Asset, Character, Episode, Scene
+from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import ConflictError, NotFoundError, ValidationError
+from app.core.services.prompt_composer_service import PromptComposerService
 
 _UPDATABLE_FIELDS = {
+    "title",
     "location",
     "description",
     "dialogue_ar",
+    "camera_direction",
+    "prompt_text",
+    "negative_prompt_text",
     "estimated_duration_seconds",
 }
 
@@ -36,15 +42,20 @@ class SceneSequenceValidation:
 class SceneService:
     """CRUD, ordering, and validation for an episode's scenes."""
 
+    def __init__(self, approval_service: ApprovalService | None = None) -> None:
+        self._approvals = approval_service or ApprovalService()
+
     def add_scene(
         self,
         session: Session,
         episode_id: uuid.UUID,
         *,
         order_index: int | None = None,
+        title: str | None = None,
         location: str | None = None,
         description: str | None = None,
         dialogue_ar: str | None = None,
+        camera_direction: str | None = None,
         estimated_duration_seconds: int | None = None,
         character_ids: list[uuid.UUID] | None = None,
     ) -> Scene:
@@ -71,9 +82,11 @@ class SceneService:
         scene = Scene(
             episode_id=episode_id,
             order_index=order_index,
+            title=title,
             location=location,
             description=description,
             dialogue_ar=dialogue_ar,
+            camera_direction=camera_direction,
             estimated_duration_seconds=estimated_duration_seconds,
         )
         if character_ids:
@@ -190,17 +203,86 @@ class SceneService:
         return self.list_episode_scenes(session, episode_id)
 
     def duplicate_scene(self, session: Session, scene_id: uuid.UUID) -> Scene:
-        """Copy a scene's content into a new scene inserted immediately after it."""
+        """Copy a scene's content into a new scene inserted immediately after it.
+
+        Copies the composed prompt too (a duplicated scene is usually a
+        starting point for a close variant, not a blank one) — it can
+        always be regenerated or hand-edited afterward.
+        """
         source = self.get_scene(session, scene_id)
-        return self.add_scene(
+        duplicate = self.add_scene(
             session,
             source.episode_id,
             order_index=source.order_index + 1,
+            title=source.title,
             location=source.location,
             description=source.description,
             dialogue_ar=source.dialogue_ar,
+            camera_direction=source.camera_direction,
             estimated_duration_seconds=source.estimated_duration_seconds,
             character_ids=[c.id for c in source.characters_present],
+        )
+        if source.prompt_text or source.negative_prompt_text:
+            duplicate.prompt_text = source.prompt_text
+            duplicate.negative_prompt_text = source.negative_prompt_text
+            session.flush()
+        return duplicate
+
+    def set_scene_characters(
+        self, session: Session, scene_id: uuid.UUID, character_ids: list[uuid.UUID]
+    ) -> Scene:
+        """Replace which characters are present in a scene.
+
+        The only way to change a scene's cast after creation — ``add_scene``
+        accepts ``character_ids`` up front, but nothing previously let a
+        scene's cast be edited afterward.
+        """
+        scene = self.get_scene(session, scene_id)
+        scene.characters_present = self._load_characters(session, character_ids) if character_ids else []
+        session.flush()
+        return scene
+
+    def approve_scene(
+        self,
+        session: Session,
+        scene_id: uuid.UUID,
+        *,
+        decided_by: str | None = None,
+        notes: str | None = None,
+    ) -> Scene:
+        scene = self.get_scene(session, scene_id)
+        self._approvals.approve_entity(session, "scene", scene_id, decided_by=decided_by, notes=notes)
+        return scene
+
+    def reject_scene(
+        self, session: Session, scene_id: uuid.UUID, *, notes: str, decided_by: str | None = None
+    ) -> Scene:
+        scene = self.get_scene(session, scene_id)
+        self._approvals.reject_entity(session, "scene", scene_id, notes=notes, decided_by=decided_by)
+        return scene
+
+    def request_scene_changes(
+        self, session: Session, scene_id: uuid.UUID, *, notes: str, decided_by: str | None = None
+    ) -> Scene:
+        scene = self.get_scene(session, scene_id)
+        self._approvals.request_changes(session, "scene", scene_id, notes=notes, decided_by=decided_by)
+        return scene
+
+    def generate_and_store_prompt(
+        self, session: Session, scene_id: uuid.UUID, composer: PromptComposerService | None = None
+    ) -> Scene:
+        """Compose this scene's prompt (see ``PromptComposerService``) and save it.
+
+        Keeps ``update_scene`` as the one place a Scene row is mutated —
+        the composer only computes text, it never writes to the database.
+        """
+        composer = composer or PromptComposerService()
+        composed = composer.compose_scene_prompt(session, scene_id)
+        return self.update_scene(
+            session,
+            scene_id,
+            prompt_text=composed.prompt_text,
+            negative_prompt_text=composed.negative_prompt_text,
         )
 
     def list_episode_scenes(self, session: Session, episode_id: uuid.UUID) -> list[Scene]:

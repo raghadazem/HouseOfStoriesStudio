@@ -9,15 +9,14 @@ as ``DashboardPage``.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QFrame,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QScrollArea,
@@ -127,60 +126,9 @@ class _CreateEpisodeDialog(FormDialog):
         }
 
 
-class _EpisodeDetailDialog(FormDialog):
-    """Read-only: metadata, task progress, and the readiness checklist."""
-
-    def __init__(
-        self,
-        episode: Episode,
-        progress_text: str,
-        checklist_lines: list[tuple[bool, bool, str]],
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(episode.title_en, show_save=False, min_width=520, parent=parent)
-
-        subtitle = QLineEdit(episode.title_ar)
-        subtitle.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-        subtitle.setReadOnly(True)
-        self.add_row("Title (Arabic)", subtitle)
-
-        meta_row = QHBoxLayout()
-        meta_row.addWidget(StatusBadge(stage_label(episode.pipeline_stage), stage_badge_variant(episode.pipeline_stage)))
-        meta_row.addWidget(StatusBadge(f"Season {episode.season}", "neutral"))
-        if episode.includes_song:
-            meta_row.addWidget(StatusBadge("Includes song", "info"))
-        meta_row.addStretch(1)
-        meta_wrap = QWidget()
-        meta_wrap.setLayout(meta_row)
-        self.add_row("Status", meta_wrap)
-
-        lesson_field = QLineEdit(episode.lesson)
-        lesson_field.setReadOnly(True)
-        self.add_row("Lesson", lesson_field)
-
-        progress_field = QLineEdit(progress_text)
-        progress_field.setReadOnly(True)
-        self.add_row("Task progress", progress_field)
-
-        checklist_panel = QFrame()
-        checklist_panel.setProperty("class", "card")
-        checklist_layout = QVBoxLayout(checklist_panel)
-        checklist_layout.setContentsMargins(
-            METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md, METRICS.spacing_md
-        )
-        checklist_layout.setSpacing(METRICS.spacing_xs)
-        if checklist_lines:
-            for passed, blocking, message in checklist_lines:
-                icon = "✅" if passed else ("⛔" if blocking else "⚠️")
-                line = QLabel(f"{icon}  {message}")
-                line.setWordWrap(True)
-                checklist_layout.addWidget(line)
-        else:
-            checklist_layout.addWidget(EmptyState("No readiness checks apply yet.", icon="📋"))
-        self.add_row("Readiness checklist", checklist_panel)
-
-
 class EpisodesPage(QWidget):
+    episode_opened = Signal(uuid.UUID)
+
     def __init__(
         self,
         ctx: ApplicationContext,
@@ -300,7 +248,7 @@ class EpisodesPage(QWidget):
             row.add_trailing_widget(
                 StatusBadge(stage_label(episode.pipeline_stage), stage_badge_variant(episode.pipeline_stage))
             )
-            row.clicked.connect(lambda _checked=False, ep=episode: self._open_detail(ep))
+            row.clicked.connect(lambda _checked=False, ep=episode: self.episode_opened.emit(ep.id))
             self._list_container.addWidget(row)
             self._rows.append((episode, row))
 
@@ -338,28 +286,7 @@ class EpisodesPage(QWidget):
         self._count_label.setVisible(bool(self._episodes))
         self._count_label.setText(f"{visible_count} of {len(self._episodes)} episodes")
 
-    # --- detail / create ----------------------------------------------------
-
-    def _open_detail(self, episode: Episode) -> None:
-        try:
-            with self._ctx.open_session() as session:
-                fresh = self._ctx.episode_service.get_episode(session, episode.id)
-                progress = self._ctx.episode_service.calculate_episode_progress(session, fresh.id)
-                report = self._ctx.episode_service.validate_episode_readiness(session, fresh.id)
-                checklist_lines = [
-                    (check.passed, check.blocking, check.message) for check in report.checks
-                ]
-                progress_text = (
-                    f"{progress.completed_tasks}/{progress.total_tasks} tasks"
-                    f" ({round(progress.percent)}%)"
-                    if progress.total_tasks
-                    else "No tasks yet"
-                )
-                dialog = _EpisodeDetailDialog(fresh, progress_text, checklist_lines, parent=self)
-        except OperationalError:
-            self._show_error_state()
-            return
-        dialog.exec()
+    # --- create --------------------------------------------------------------
 
     def _on_create_episode(self) -> None:
         existing_numbers = {episode.number for episode in self._episodes}

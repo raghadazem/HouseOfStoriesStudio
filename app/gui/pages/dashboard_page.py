@@ -17,6 +17,7 @@ fabricated trend, ETA, or queue).
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
 
 from PySide6.QtCore import Signal
@@ -93,6 +94,7 @@ class DashboardPage(QWidget):
     navigate_requested = Signal(str)
     episode_updated = Signal(str, str)  # title, stage_label ("" / "" when none)
     review_count_updated = Signal(int)
+    open_episode_requested = Signal(uuid.UUID)
 
     def __init__(
         self,
@@ -234,17 +236,11 @@ class DashboardPage(QWidget):
                         "Run the CLI's `seed-demo` command to create the demo episode.",
                     )
                     return
-                progress = self._ctx.episode_service.calculate_episode_progress(session, episode.id)
-                show_info(
-                    self, episode.title_en,
-                    f"{episode.title_ar}\n\n"
-                    f"Stage: {episode.pipeline_stage.value}\n"
-                    f"Lesson: {episode.lesson}\n"
-                    f"Task progress: {progress.completed_tasks}/{progress.total_tasks} "
-                    f"({progress.percent}%)",
-                )
+                episode_id = episode.id
         except OperationalError:
             self._show_db_not_ready()
+            return
+        self.open_episode_requested.emit(episode_id)
 
     def _on_import_asset(self) -> None:
         show_not_implemented(self, "Import Asset")

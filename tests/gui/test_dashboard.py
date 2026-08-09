@@ -81,29 +81,24 @@ def test_open_episode_001_shows_not_found_dialog_when_none_exists(
     assert "No Episode #1" in calls[0][1]
 
 
-def test_open_episode_001_shows_real_episode_details(
-    qtbot, gui_context: ApplicationContext, theme: ThemeManager, monkeypatch: pytest.MonkeyPatch
+def test_open_episode_001_emits_open_episode_requested(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
 ) -> None:
     with gui_context.session_scope() as session:
-        session.add(
-            Episode(
-                slug="ep001_test", number=1, title_ar="ع", title_en="My Episode", lesson="Sharing"
-            )
+        episode = Episode(
+            slug="ep001_test", number=1, title_ar="ع", title_en="My Episode", lesson="Sharing"
         )
+        session.add(episode)
+        session.flush()
+        episode_id = episode.id
 
     page = DashboardPage(gui_context, theme)
     qtbot.addWidget(page)
 
-    calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(
-        "app.gui.pages.dashboard_page.show_info",
-        lambda _parent, title, message: calls.append((title, message)),
-    )
+    with qtbot.waitSignal(page.open_episode_requested, timeout=1000) as blocker:
+        page._on_open_episode_001()
 
-    page._on_open_episode_001()
-
-    assert calls[0][0] == "My Episode"
-    assert "Sharing" in calls[0][1]
+    assert blocker.args == [episode_id]
 
 
 def test_create_episode_and_import_asset_show_not_implemented(

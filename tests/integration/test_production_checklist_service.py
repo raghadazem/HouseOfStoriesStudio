@@ -12,7 +12,7 @@ import hashlib
 
 from sqlalchemy.orm import Session
 
-from app.core.db.enums import ApprovalStatus, AssetType
+from app.core.db.enums import ApprovalStatus, AssetType, StageState
 from app.core.models import Asset
 from app.core.services.character_service import CharacterService
 from app.core.services.character_version_service import CharacterVersionService
@@ -21,6 +21,7 @@ from app.core.services.license_service import LicenseService
 from app.core.services.production_checklist_service import ProductionChecklistService
 from app.core.services.production_task_service import ProductionTaskService
 from app.core.services.scene_service import SceneService
+from app.core.services.script_service import ScriptService
 from app.core.services.short_service import ShortService
 
 
@@ -71,6 +72,7 @@ def test_episode_readiness_success_when_everything_is_satisfied(session: Session
     shs = ShortService()
     ts = ProductionTaskService()
     ls = LicenseService()
+    scripts = ScriptService()
     checklist = ProductionChecklistService()
 
     # Character with an approved, active version.
@@ -105,10 +107,16 @@ def test_episode_readiness_success_when_everything_is_satisfied(session: Session
         hashtags=["#kids", "#arabic"],
     )
 
+    script = scripts.get_or_create_script(session, episode.id)
+    scripts.update_script(session, script.id, full_script="Once upon a time...")
+    scripts.submit_script_ready(session, script.id)
+    scripts.approve_script(session, script.id, decided_by="founder")
+
     scene = ss.add_scene(
         session, episode.id, location="forest", description="Finding the turtle.",
         dialogue_ar="لقد وجدنا السلحفاة!",
     )
+    ss.approve_scene(session, scene.id, decided_by="founder")
 
     for short in shs.list_episode_shorts(session, episode.id):
         shs.update_short(
@@ -155,3 +163,64 @@ def test_episode_readiness_success_when_everything_is_satisfied(session: Session
     es.change_episode_status(session, episode.id, PipelineStage.PUBLISHED)
     assert episode.pipeline_stage == PipelineStage.PUBLISHED
     assert episode.published_at is not None
+
+    # The Episode Workspace's 8-stage summary agrees: every stage completed
+    # (or, for export, reflects the just-published state).
+    summary = {s.stage: s.status for s in checklist.evaluate_stage_summary(session, episode.id)}
+    assert all(status == StageState.COMPLETED for status in summary.values())
+
+
+def test_evaluate_stage_summary_on_a_freshly_created_episode(session: Session) -> None:
+    """Every stage reads NOT_STARTED (or the stage's own equivalent) before
+    any work has been done — the incomplete-episode counterpart to the
+    fully-ready test above."""
+    es = EpisodeService()
+    checklist = ProductionChecklistService()
+    episode = es.create_episode_from_template(
+        session,
+        slug="ep001_lost_little_turtle",
+        number=1,
+        title_ar="ميليسا وبيلسان والسلحفاة الصغيرة الضائعة",
+        title_en="Melissa and Bilsan and the Lost Little Turtle",
+        lesson="Helping others",
+        include_shorts=False,
+        include_default_tasks=False,
+    )
+
+    summary = {s.stage: s for s in checklist.evaluate_stage_summary(session, episode.id)}
+
+    assert summary["script"].status == StageState.NOT_STARTED
+    assert summary["storyboard"].status == StageState.NOT_STARTED
+    assert summary["images"].status == StageState.NOT_STARTED
+    assert summary["voice"].status == StageState.NOT_STARTED
+    assert summary["video"].status == StageState.NOT_STARTED
+    assert summary["seo"].status == StageState.NOT_STARTED
+    assert summary["music"].status == StageState.COMPLETED  # includes_song defaults to False
+    assert summary["export"].status == StageState.BLOCKED
+
+
+def test_evaluate_stage_summary_voice_blocked_reports_missing_narration_scene(
+    session: Session,
+) -> None:
+    es = EpisodeService()
+    ss = SceneService()
+    checklist = ProductionChecklistService()
+    episode = es.create_episode_from_template(
+        session,
+        slug="ep001_lost_little_turtle",
+        number=1,
+        title_ar="ميليسا وبيلسان والسلحفاة الصغيرة الضائعة",
+        title_en="Melissa and Bilsan and the Lost Little Turtle",
+        lesson="Helping others",
+        include_shorts=False,
+        include_default_tasks=False,
+    )
+    ss.add_scene(session, episode.id, description="Scene one.", dialogue_ar="واحد")
+    ss.add_scene(session, episode.id, description="Scene two.", dialogue_ar="اثنان")
+    ss.add_scene(session, episode.id, description="Scene three.", dialogue_ar="ثلاثة")
+    ss.add_scene(session, episode.id, description="Scene four, missing narration.")
+
+    summary = {s.stage: s for s in checklist.evaluate_stage_summary(session, episode.id)}
+
+    assert summary["voice"].status == StageState.BLOCKED
+    assert summary["voice"].reason == "Scene 4 has no narration."

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation
 from PySide6.QtWidgets import (
     QGraphicsOpacityEffect,
@@ -19,6 +21,7 @@ from app.gui.context import ApplicationContext
 from app.gui.pages.assets_page import AssetsPage
 from app.gui.pages.characters_page import CharactersPage
 from app.gui.pages.dashboard_page import DashboardPage
+from app.gui.pages.episode_workspace_page import EpisodeWorkspacePage
 from app.gui.pages.episodes_page import EpisodesPage
 from app.gui.pages.prompts_page import PromptsPage
 from app.gui.pages.review_queue_page import ReviewQueuePage
@@ -93,6 +96,7 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
+        self._episode_workspace_page: EpisodeWorkspacePage | None = None
         self.dashboard_page = DashboardPage(self._ctx, self._theme, self)
         self.episodes_page = EpisodesPage(self._ctx, self._theme, self, on_feedback=self.show_toast)
         self.characters_page = CharactersPage(self._ctx, self._theme, self, on_feedback=self.show_toast)
@@ -162,6 +166,8 @@ class MainWindow(QMainWindow):
         self.dashboard_page.episode_updated.connect(self.top_bar.set_current_episode)
         self.dashboard_page.review_count_updated.connect(self._on_review_count_updated)
         self.review_queue_page.review_count_updated.connect(self._on_review_count_updated)
+        self.dashboard_page.open_episode_requested.connect(self.open_episode_workspace)
+        self.episodes_page.episode_opened.connect(self.open_episode_workspace)
 
     def _on_review_count_updated(self, count: int) -> None:
         self.sidebar.set_badge("review_queue", count)
@@ -172,6 +178,27 @@ class MainWindow(QMainWindow):
         button = self.sidebar.button_for(key)
         if button is not None:
             button.click()
+
+    def open_episode_workspace(self, episode_id: uuid.UUID) -> None:
+        """Open the full Episode Workspace for ``episode_id``.
+
+        Not a fixed sidebar item — episodes are opened ad hoc (an
+        Episodes row click, a Dashboard quick action), so this page is
+        built once and re-targeted at whichever episode was opened most
+        recently, rather than accumulating one stacked page per episode
+        ever opened.
+        """
+        if self._episode_workspace_page is None:
+            self._episode_workspace_page = EpisodeWorkspacePage(
+                self._ctx, self._theme, episode_id, self, on_feedback=self.show_toast,
+            )
+            self._episode_workspace_page.back_requested.connect(lambda: self.navigate_to("episodes"))
+            self._add_page("episode_workspace", self._episode_workspace_page)
+        else:
+            self._episode_workspace_page.set_episode(episode_id)
+        self.stack.setCurrentWidget(self._episode_workspace_page)
+        self._animate_page_transition(self._episode_workspace_page)
+        self.set_state("Viewing Episode Workspace")
 
     def _on_nav_selected(self, key: str) -> None:
         page = self._pages.get(key)

@@ -117,8 +117,8 @@ def test_on_create_episode_adds_a_real_row(
     assert page._rows[0][0].title_en == "Created Episode"
 
 
-def test_open_detail_builds_dialog_with_readiness_checklist(
-    qtbot, gui_context: ApplicationContext, theme: ThemeManager, monkeypatch
+def test_clicking_a_row_emits_episode_opened(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
 ) -> None:
     with gui_context.session_scope() as session:
         session.add(
@@ -128,17 +128,7 @@ def test_open_detail_builds_dialog_with_readiness_checklist(
     page = EpisodesPage(gui_context, theme)
     qtbot.addWidget(page)
 
-    opened = []
-    from app.gui.pages import episodes_page as module
-
-    class _FakeDialog:
-        def __init__(self, *args, **kwargs):
-            opened.append(args)
-
-        def exec(self):
-            return 0
-
-    monkeypatch.setattr(module, "_EpisodeDetailDialog", _FakeDialog)
-    episode, _row = page._rows[0]
-    page._open_detail(episode)
-    assert len(opened) == 1
+    episode, row = page._rows[0]
+    with qtbot.waitSignal(page.episode_opened, timeout=1000) as blocker:
+        row.clicked.emit()
+    assert blocker.args == [episode.id]

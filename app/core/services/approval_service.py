@@ -32,6 +32,7 @@ from app.core.models import (
     Episode,
     PromptTemplate,
     Scene,
+    Script,
     Short,
 )
 from app.core.models.approval import ApprovalRecord
@@ -43,6 +44,7 @@ ENTITY_TYPE_MODELS: dict[str, type] = {
     "character_reference": CharacterReference,
     "episode": Episode,
     "scene": Scene,
+    "script": Script,
     "short": Short,
     "prompt_template": PromptTemplate,
 }
