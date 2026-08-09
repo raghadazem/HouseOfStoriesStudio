@@ -112,6 +112,9 @@ class Episode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     script: Mapped[Script | None] = relationship(
         back_populates="episode", cascade="all, delete-orphan", uselist=False
     )
+    song: Mapped[Song | None] = relationship(
+        back_populates="episode", cascade="all, delete-orphan", uselist=False
+    )
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid only
         return f"<Episode #{self.number} {self.slug!r}>"
@@ -150,6 +153,35 @@ class Script(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         return f"<Script episode={self.episode_id} status={self.status.value}>"
 
 
+class Song(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """The Episode Workspace's Music stage's written song package — one per Episode.
+
+    Deliberately minimal and un-versioned (unlike ``Script``/``CharacterVersion``):
+    nothing in this milestone reviews or approves lyrics, so there is no
+    status lifecycle here. This is *planning content* — lyrics, purpose,
+    and a Suno-ready style prompt for a human (or an external tool) to
+    actually produce the audio from; no AI provider is ever called with
+    this data. The Music tab's existing ``Asset``/``AssetImportService``
+    flow is still how the final produced audio file itself gets in.
+    """
+
+    __tablename__ = "songs"
+
+    episode_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("episodes.id", ondelete="CASCADE"), unique=True, nullable=False
+    )
+    lyrics_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    purpose: Mapped[str | None] = mapped_column(Text, nullable=True)
+    duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    production_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    suno_style_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    episode: Mapped[Episode] = relationship(back_populates="song")
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid only
+        return f"<Song episode={self.episode_id}>"
+
+
 class Scene(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """One scene within an episode's script/storyboard breakdown."""
 
@@ -173,6 +205,13 @@ class Scene(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # provider by anything in this milestone.
     prompt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     negative_prompt_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Voice-direction guidance for this scene's dialogue: emotional tone,
+    # pacing, and pronunciation notes together as one short paragraph —
+    # not split into separate columns, since these are normally authored
+    # together as a single piece of direction for whoever performs the
+    # lines. The lines themselves stay in ``dialogue_ar`` (already a full
+    # narration+dialogue script per Milestone 5's SceneCard labeling).
+    voice_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Founder-estimated (not auto-derived) length of this scene, used by
     # SceneService.calculate_total_scene_duration. Nullable: most scenes
     # won't have a duration estimate until later in production.
@@ -207,6 +246,14 @@ class Short(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     caption_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
     hashtags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     source_timestamp_range: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Milestone 6 additions — the Short's own edit script, distinct from
+    # its source Scenes' full dialogue: what's actually spoken/on-screen
+    # in the cut-down clip, its own target length, and free-text notes
+    # for whoever edits it together.
+    spoken_text_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    on_screen_text_ar: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    editing_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[ShortStatus] = mapped_column(
         Enum(ShortStatus, native_enum=False, length=32),
         default=ShortStatus.PLANNED,

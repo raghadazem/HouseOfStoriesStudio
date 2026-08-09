@@ -36,6 +36,7 @@ EXPECTED_TABLES = {
     "scripts",
     "short_scenes",
     "shorts",
+    "songs",
 }
 
 

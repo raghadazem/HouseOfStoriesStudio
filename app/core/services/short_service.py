@@ -27,6 +27,10 @@ _UPDATABLE_FIELDS = {
     "source_timestamp_range",
     "status",
     "export_asset_id",
+    "spoken_text_ar",
+    "on_screen_text_ar",
+    "target_duration_seconds",
+    "editing_notes",
 }
 
 

@@ -285,3 +285,66 @@ def test_generate_and_store_prompt_persists_composer_output(session: Session) ->
     updated = ss.generate_and_store_prompt(session, scene.id, composer=_FakeComposer())
     assert updated.prompt_text == "composed prompt"
     assert updated.negative_prompt_text == "composed negative"
+
+
+def test_update_scene_accepts_voice_notes(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    updated = ss.update_scene(session, scene.id, voice_notes="Warm, gentle tone; slow pacing.")
+    assert updated.voice_notes == "Warm, gentle tone; slow pacing."
+
+
+def test_build_voice_package_splits_dialogue_by_speaker(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    first = ss.add_scene(
+        session, episode.id, title="The Discovery",
+        dialogue_ar="الراوي: مقدمة قصيرة.\nميليسا: انظري يا بيلسان!\nبيلسان: ماذا؟",
+    )
+    ss.update_scene(session, first.id, voice_notes="Curious, upbeat pacing.")
+    second = ss.add_scene(
+        session, episode.id, title="The Reunion",
+        dialogue_ar="طُرطُر: نجحنا!\n(اتجاه بصري بلا حوار)",
+    )
+    ss.update_scene(session, second.id, voice_notes="Joyful, relieved.")
+
+    lines = ss.build_voice_package(session, episode.id)
+
+    assert [(line.speaker, line.text) for line in lines] == [
+        ("الراوي", "مقدمة قصيرة."),
+        ("ميليسا", "انظري يا بيلسان!"),
+        ("بيلسان", "ماذا؟"),
+        ("طُرطُر", "نجحنا!"),
+    ]
+    assert lines[0].scene_title == "The Discovery"
+    assert lines[0].voice_notes == "Curious, upbeat pacing."
+    assert lines[-1].scene_title == "The Reunion"
+    assert lines[-1].voice_notes == "Joyful, relieved."
+
+
+def test_build_voice_package_groups_lines_per_speaker(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    ss.add_scene(
+        session, episode.id,
+        dialogue_ar="ميليسا: سطر أول.\nبيلسان: سطر ثانٍ.\nميليسا: سطر ثالث.",
+    )
+
+    lines = ss.build_voice_package(session, episode.id)
+    by_speaker: dict[str, list[str]] = {}
+    for line in lines:
+        by_speaker.setdefault(line.speaker, []).append(line.text)
+
+    assert by_speaker == {
+        "ميليسا": ["سطر أول.", "سطر ثالث."],
+        "بيلسان": ["سطر ثانٍ."],
+    }
+
+
+def test_build_voice_package_ignores_scenes_with_no_dialogue(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    ss.add_scene(session, episode.id, description="A silent visual beat.")
+
+    assert ss.build_voice_package(session, episode.id) == []

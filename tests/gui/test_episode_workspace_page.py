@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from app.core.db.episode_001_production import populate_episode_001_production_content
 from app.core.models import Episode
 from app.gui.context import ApplicationContext
 from app.gui.pages.episode_workspace_page import EpisodeWorkspacePage
@@ -228,3 +229,87 @@ def test_set_episode_retargets_the_page_at_a_different_episode(
     page.set_episode(episode_two_id)
 
     assert "Second Episode" in page._header._title_label.text()
+
+
+def test_save_script_on_a_brand_new_episode_persists_without_error(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    """Regression test: on a freshly created episode, the very first
+    refresh()'s get_or_create_script used to run in a non-committing
+    session, so the newly inserted Script row was rolled back the
+    moment refresh() returned — the next Save then hit NotFoundError,
+    which _on_save_script's own error handler turned into a blocking
+    QMessageBox with no user present to dismiss it (a permanent hang
+    under the offscreen test platform). refresh()/_refresh_song_fields
+    now use session_scope so the get-or-create actually persists."""
+    episode = _episode(gui_context)
+    page = EpisodeWorkspacePage(gui_context, theme, episode.id)
+    qtbot.addWidget(page)
+
+    page._script_summary.setPlainText("A short summary.")
+    page._script_full.setPlainText("A turtle is lost near the lake.")
+    page._on_save_script()
+
+    with gui_context.open_session() as session:
+        script = gui_context.script_service.get_or_create_script(session, episode.id)
+        assert script.full_script == "A turtle is lost near the lake."
+
+
+def test_music_tab_shows_song_fields_for_a_fresh_episode(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    episode = _episode(gui_context)
+    page = EpisodeWorkspacePage(gui_context, theme, episode.id)
+    qtbot.addWidget(page)
+
+    assert page._song_lyrics.toPlainText() == ""
+    assert page._song_duration.text() == ""
+
+
+def test_save_song_round_trips_through_song_service(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    episode = _episode(gui_context)
+    page = EpisodeWorkspacePage(gui_context, theme, episode.id)
+    qtbot.addWidget(page)
+
+    page._song_lyrics.setPlainText("كلمات جديدة")
+    page._song_purpose.setPlainText("Teach teamwork.")
+    page._song_duration.setText("50")
+    page._song_notes.setPlainText("Upbeat.")
+    page._song_suno_prompt.setPlainText("Children's pop.")
+    page._on_save_song()
+
+    with gui_context.open_session() as session:
+        song = gui_context.song_service.get_or_create_song(session, episode.id)
+        assert song.lyrics_ar == "كلمات جديدة"
+        assert song.duration_seconds == 50
+        assert song.suno_style_prompt == "Children's pop."
+
+
+def test_workspace_loads_real_episode_001_production_content(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    """The Episode Workspace is the one and only way this content is
+    meant to be viewed/edited (no parallel workflow) — this proves the
+    real Milestone 6 production data actually renders through it."""
+    with gui_context.session_scope() as session:
+        episode = populate_episode_001_production_content(session)
+        episode_id = episode.id
+
+    page = EpisodeWorkspacePage(gui_context, theme, episode_id)
+    qtbot.addWidget(page)
+
+    assert "Melissa and Bilsan" in page._header._title_label.text()
+    assert len(page._script_full.toPlainText()) > 500
+
+    page._tabs.setCurrentIndex(1)
+    cards = _cards(page)
+    assert len(cards) == 15
+    assert cards[0]._title_label.text() == "Scene 1: صوت غريب عند البحيرة"
+
+    assert "معاً نستطيع" in page._song_lyrics.toPlainText()
+    assert page._song_duration.text() == "60"
+
+    assert page._seo_description_ar.toPlainText()
+    assert page._seo_hashtags.text()

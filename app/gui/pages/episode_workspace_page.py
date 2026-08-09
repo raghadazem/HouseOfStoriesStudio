@@ -194,7 +194,14 @@ class EpisodeWorkspacePage(QWidget):
 
     def refresh(self) -> None:
         try:
-            with self._ctx.open_session() as session:
+            # session_scope (commit-on-success), not open_session — both
+            # get_or_create_script and get_or_create_song below insert a
+            # row the first time a tab is opened, and a non-committing
+            # session would silently roll that insert back the moment
+            # this block exits, leaving _script_id/_song_id pointing at a
+            # row that doesn't actually exist yet (the next Save then
+            # raises NotFoundError). See docs/30_MILESTONE_6_EPISODE_001_PRODUCTION_STATUS.md.
+            with self._ctx.session_scope() as session:
                 episode = self._ctx.episode_service.get_episode(session, self._episode_id)
                 self._header.set_title(f"#{episode.number}  {episode.title_en}")
                 self._header.set_subtitle(episode.title_ar)
@@ -208,6 +215,7 @@ class EpisodeWorkspacePage(QWidget):
         self.setWindowTitle(episode.title_en)
         self._refresh_script_tab(episode, script)
         self._refresh_storyboard_tab()
+        self._refresh_song_fields()
         for key, asset_type in _ASSET_TAB_TYPES.items():
             self._refresh_asset_tab(key, asset_type)
         self._refresh_seo_tab(episode)
@@ -501,6 +509,9 @@ class EpisodeWorkspacePage(QWidget):
 
     def _build_asset_tab(self, key: str) -> None:
         tab, layout = self._new_tab()
+        if key == "music":
+            self._build_song_fields(layout)
+            layout.addWidget(QLabel("Produced Music Assets"))
         header_row = QHBoxLayout()
         import_button = QPushButton(f"+ Import {key.title()}")
         import_button.setProperty("class", "primary")
@@ -569,6 +580,69 @@ class EpisodeWorkspacePage(QWidget):
             self._overlay.stop()
         self._refresh_asset_tab(key, asset_type)
         self._notify(f"{key.title()} asset imported.")
+
+    # --- Music tab's Song package (written content, not the produced audio file) --
+
+    def _build_song_fields(self, layout: QVBoxLayout) -> None:
+        layout.addWidget(QLabel("Song Package"))
+        self._song_lyrics = QTextEdit()
+        self._song_lyrics.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
+        self._song_lyrics.setMinimumHeight(140)
+        layout.addWidget(QLabel("Lyrics (Arabic)"))
+        layout.addWidget(self._song_lyrics)
+        self._song_purpose = QTextEdit()
+        layout.addWidget(QLabel("Purpose"))
+        layout.addWidget(self._song_purpose)
+        self._song_duration = QLineEdit()
+        self._song_duration.setPlaceholderText("Approximate duration in seconds")
+        layout.addWidget(QLabel("Duration (seconds)"))
+        layout.addWidget(self._song_duration)
+        self._song_notes = QTextEdit()
+        layout.addWidget(QLabel("Production notes"))
+        layout.addWidget(self._song_notes)
+        self._song_suno_prompt = QTextEdit()
+        layout.addWidget(QLabel("Suno-ready style prompt"))
+        layout.addWidget(self._song_suno_prompt)
+
+        save_button = QPushButton("Save Song")
+        save_button.setProperty("class", "primary")
+        save_button.clicked.connect(self._on_save_song)
+        layout.addWidget(save_button)
+
+    def _refresh_song_fields(self) -> None:
+        try:
+            # session_scope, not open_session — see the comment in refresh().
+            with self._ctx.session_scope() as session:
+                song = self._ctx.song_service.get_or_create_song(session, self._episode_id)
+                lyrics, purpose, duration, notes, suno_prompt, song_id = (
+                    song.lyrics_ar, song.purpose, song.duration_seconds,
+                    song.production_notes, song.suno_style_prompt, song.id,
+                )
+        except OperationalError:
+            return
+        self._song_lyrics.setPlainText(lyrics or "")
+        self._song_purpose.setPlainText(purpose or "")
+        self._song_duration.setText(str(duration) if duration else "")
+        self._song_notes.setPlainText(notes or "")
+        self._song_suno_prompt.setPlainText(suno_prompt or "")
+        self._song_id = song_id
+
+    def _on_save_song(self) -> None:
+        duration_text = self._song_duration.text().strip()
+        try:
+            with self._ctx.session_scope() as session:
+                self._ctx.song_service.update_song(
+                    session, self._song_id,
+                    lyrics_ar=self._song_lyrics.toPlainText().strip() or None,
+                    purpose=self._song_purpose.toPlainText().strip() or None,
+                    duration_seconds=int(duration_text) if duration_text.isdigit() else None,
+                    production_notes=self._song_notes.toPlainText().strip() or None,
+                    suno_style_prompt=self._song_suno_prompt.toPlainText().strip() or None,
+                )
+        except ServiceError as err:
+            show_error(self, "Save Song", str(err))
+            return
+        self._notify("Song saved.")
 
     # =================================================================== SEO
 

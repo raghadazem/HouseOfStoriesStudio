@@ -53,6 +53,23 @@ def test_update_short_rejects_short_index(session: Session) -> None:
         shs.update_short(session, short.id, short_index=5)
 
 
+def test_update_short_accepts_milestone_6_fields(session: Session) -> None:
+    shs = ShortService()
+    episode = _episode(session)
+    short = shs.create_short(session, episode.id)
+    updated = shs.update_short(
+        session, short.id,
+        spoken_text_ar="ميليسا: مرحباً!",
+        on_screen_text_ar="سلحفاة صغيرة! 🐢",
+        target_duration_seconds=30,
+        editing_notes="Fast cold-open cut, freeze on the reveal.",
+    )
+    assert updated.spoken_text_ar == "ميليسا: مرحباً!"
+    assert updated.on_screen_text_ar == "سلحفاة صغيرة! 🐢"
+    assert updated.target_duration_seconds == 30
+    assert updated.editing_notes == "Fast cold-open cut, freeze on the reveal."
+
+
 def test_reorder_shorts_normalizes_sequence(session: Session) -> None:
     shs = ShortService()
     episode = _episode(session)

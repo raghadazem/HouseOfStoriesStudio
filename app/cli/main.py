@@ -28,6 +28,7 @@ from app.core.ai.orchestrator import AIOrchestrator
 from app.core.ai.providers import PROVIDER_REGISTRY
 from app.core.db.engine import create_db_engine, create_session_factory
 from app.core.db.enums import AssetType
+from app.core.db.episode_001_production import populate_episode_001_production_content
 from app.core.db.seed import seed_demo_data
 from app.core.models import Asset
 from app.core.services.approval_service import ApprovalService
@@ -106,6 +107,21 @@ def cmd_seed_demo(_args: argparse.Namespace) -> int:
         result = seed_demo_data(session)
     episode = result["episode_001"]
     print(f"Seed data ready: melissa, bilsan, {episode.slug} (3 shorts).")
+    return 0
+
+
+def cmd_populate_episode_001(_args: argparse.Namespace) -> int:
+    """Fill Episode 001 with its real Milestone 6 production content.
+
+    Idempotent and safe to re-run: never overwrites a field a human has
+    already edited (through the GUI or a previous run of this command).
+    """
+    with _session_factory()() as session:
+        episode = populate_episode_001_production_content(session)
+    print(
+        f"Episode 001 production content ready: {len(episode.scenes)} scene(s), "
+        f"{len(episode.shorts)} short(s), song={'yes' if episode.includes_song else 'no'}."
+    )
     return 0
 
 
@@ -291,6 +307,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = subparsers.add_parser("seed-demo", help="Seed Melissa, Bilsan, Episode 001, and its 3 Shorts.")
     p.set_defaults(func=cmd_seed_demo)
+
+    p = subparsers.add_parser(
+        "populate-episode-001",
+        help="Fill Episode 001 with its real Milestone 6 production content (idempotent).",
+    )
+    p.set_defaults(func=cmd_populate_episode_001)
 
     p = subparsers.add_parser("create-episode", help="Create a new episode from the standard template.")
     p.add_argument("--slug", required=True)

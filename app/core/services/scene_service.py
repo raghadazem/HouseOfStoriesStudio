@@ -28,6 +28,7 @@ _UPDATABLE_FIELDS = {
     "prompt_text",
     "negative_prompt_text",
     "estimated_duration_seconds",
+    "voice_notes",
 }
 
 
@@ -37,6 +38,23 @@ class SceneSequenceValidation:
 
     is_valid: bool
     issues: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class VoiceLine:
+    """One speaker-attributed line, extracted from a Scene's ``dialogue_ar``.
+
+    Produced by :meth:`SceneService.build_voice_package` — a pure
+    derivation from data that already exists (``dialogue_ar``'s
+    ``"Speaker: line"`` convention, ``voice_notes``), not a new stored
+    voice-script subsystem.
+    """
+
+    scene_order_index: int
+    scene_title: str | None
+    speaker: str
+    text: str
+    voice_notes: str | None
 
 
 class SceneService:
@@ -292,6 +310,45 @@ class SceneService:
             .order_by(Scene.order_index)
             .all()
         )
+
+    def build_voice_package(self, session: Session, episode_id: uuid.UUID) -> list[VoiceLine]:
+        """The episode's full voice-production script, split by speaker.
+
+        Parses each scene's ``dialogue_ar`` for lines written as
+        ``"Speaker: line text"`` (the convention every scene in this
+        codebase already writes narration/dialogue in — see
+        ``docs/30_MILESTONE_6_EPISODE_001_PRODUCTION_STATUS.md``). This
+        is a pure read-side derivation, not a new persisted voice-script
+        model — grouping the result by ``speaker`` (e.g. with
+        ``itertools.groupby`` after sorting) gives the per-character
+        breakdown (Melissa / Bilsan / Narrator / the supporting
+        character) a voice-production package needs, without storing
+        the same dialogue twice.
+        """
+        scenes = self.list_episode_scenes(session, episode_id)
+        lines: list[VoiceLine] = []
+        for scene in scenes:
+            if not scene.dialogue_ar:
+                continue
+            for raw_line in scene.dialogue_ar.splitlines():
+                stripped = raw_line.strip()
+                if not stripped or ":" not in stripped:
+                    continue
+                speaker, _, text = stripped.partition(":")
+                speaker = speaker.strip()
+                text = text.strip()
+                if not speaker or not text:
+                    continue
+                lines.append(
+                    VoiceLine(
+                        scene_order_index=scene.order_index,
+                        scene_title=scene.title,
+                        speaker=speaker,
+                        text=text,
+                        voice_notes=scene.voice_notes,
+                    )
+                )
+        return lines
 
     def calculate_total_scene_duration(self, session: Session, episode_id: uuid.UUID) -> int:
         """Sum of every scene's ``estimated_duration_seconds`` (treating missing as 0)."""

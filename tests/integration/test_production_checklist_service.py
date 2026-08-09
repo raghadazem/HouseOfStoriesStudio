@@ -23,6 +23,7 @@ from app.core.services.production_task_service import ProductionTaskService
 from app.core.services.scene_service import SceneService
 from app.core.services.script_service import ScriptService
 from app.core.services.short_service import ShortService
+from app.core.services.song_service import SongService
 
 
 def _approved_asset(session: Session, *, episode_id, role: str, asset_type=AssetType.VIDEO, **overrides) -> Asset:
@@ -224,3 +225,65 @@ def test_evaluate_stage_summary_voice_blocked_reports_missing_narration_scene(
 
     assert summary["voice"].status == StageState.BLOCKED
     assert summary["voice"].reason == "Scene 4 has no narration."
+
+
+def test_evaluate_stage_summary_images_and_video_blocked_when_character_refs_missing(
+    session: Session,
+) -> None:
+    """A featured character with no approved active CharacterVersion blocks
+    Images/Video specifically for that reason, not just "not started" —
+    the truthful-readiness rule Milestone 6 requires (no fake approvals,
+    no green stages the work doesn't actually support yet)."""
+    cs = CharacterService()
+    es = EpisodeService()
+    checklist = ProductionChecklistService()
+
+    melissa = cs.create_character(session, slug="melissa", name_ar="ميليسا", name_en="Melissa")
+    bilsan = cs.create_character(session, slug="bilsan", name_ar="بيلسان", name_en="Bilsan")
+    episode = es.create_episode_from_template(
+        session,
+        slug="ep001_lost_little_turtle",
+        number=1,
+        title_ar="ميليسا وبيلسان والسلحفاة الصغيرة الضائعة",
+        title_en="Melissa and Bilsan and the Lost Little Turtle",
+        lesson="Helping others",
+        character_ids=[melissa.id, bilsan.id],
+        include_shorts=False,
+        include_default_tasks=False,
+    )
+
+    summary = {s.stage: s for s in checklist.evaluate_stage_summary(session, episode.id)}
+
+    assert summary["images"].status == StageState.BLOCKED
+    assert "melissa" in summary["images"].reason
+    assert "bilsan" in summary["images"].reason
+    assert summary["video"].status == StageState.BLOCKED
+    assert "melissa" in summary["video"].reason
+    assert "bilsan" in summary["video"].reason
+
+
+def test_evaluate_stage_summary_music_in_progress_when_lyrics_written(session: Session) -> None:
+    """Once real song content exists but no final audio asset is linked
+    yet, Music should read IN_PROGRESS, not NOT_STARTED — distinguishing
+    "written, not yet produced" from "nothing written at all"."""
+    es = EpisodeService()
+    songs = SongService()
+    checklist = ProductionChecklistService()
+    episode = es.create_episode_from_template(
+        session,
+        slug="ep001_lost_little_turtle",
+        number=1,
+        title_ar="ميليسا وبيلسان والسلحفاة الصغيرة الضائعة",
+        title_en="Melissa and Bilsan and the Lost Little Turtle",
+        lesson="Helping others",
+        includes_song=True,
+        include_shorts=False,
+        include_default_tasks=False,
+    )
+    song = songs.get_or_create_song(session, episode.id)
+    songs.update_song(session, song.id, lyrics_ar="معاً نستطيع")
+
+    summary = {s.stage: s for s in checklist.evaluate_stage_summary(session, episode.id)}
+
+    assert summary["music"].status == StageState.IN_PROGRESS
+    assert "awaiting final produced audio" in summary["music"].reason

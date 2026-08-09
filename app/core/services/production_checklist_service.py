@@ -25,7 +25,7 @@ from app.core.db.enums import (
     ScriptStatus,
     StageState,
 )
-from app.core.models import Asset, CharacterVersion, Episode, ProductionTask, Script
+from app.core.models import Asset, CharacterVersion, Episode, ProductionTask, Script, Song
 from app.core.models.asset import (
     ROLE_FINAL_MUSIC,
     ROLE_FINAL_THUMBNAIL,
@@ -237,6 +237,12 @@ class ProductionChecklistService:
         self, session: Session, episode_id: uuid.UUID, episode: Episode,
         checks: list[CheckResult], report: ChecklistReport,
     ) -> StageStatus:
+        unready = self._characters_missing_approved_version(session, episode)
+        if unready:
+            return StageStatus(
+                "images", StageState.BLOCKED,
+                f"Missing approved character reference art for: {', '.join(unready)}.",
+            )
         no_thumbnail = any(c.name == "thumbnail_exists" and not c.passed for c in checks)
         return self._status_from_checks("images", checks, not_started=no_thumbnail)
 
@@ -266,12 +272,25 @@ class ProductionChecklistService:
             .filter_by(episode_id=episode_id, role=ROLE_FINAL_MUSIC)
             .count() > 0
         )
+        if not has_music_asset:
+            song = session.query(Song).filter_by(episode_id=episode_id).one_or_none()
+            if song is not None and song.lyrics_ar and song.lyrics_ar.strip():
+                return StageStatus(
+                    "music", StageState.IN_PROGRESS,
+                    "Song lyrics and production notes are written; awaiting final produced audio.",
+                )
         return self._status_from_checks("music", checks, not_started=not has_music_asset)
 
     def _stage_status_video(
         self, session: Session, episode_id: uuid.UUID, episode: Episode,
         checks: list[CheckResult], report: ChecklistReport,
     ) -> StageStatus:
+        unready = self._characters_missing_approved_version(session, episode)
+        if unready:
+            return StageStatus(
+                "video", StageState.BLOCKED,
+                f"Missing approved character reference art for: {', '.join(unready)}.",
+            )
         no_video = any(c.name == "final_video_asset_exists" and not c.passed for c in checks)
         no_shorts = any(c.name == "three_initial_shorts_exist" and not c.passed for c in checks)
         return self._status_from_checks("video", checks, not_started=no_video and no_shorts)
@@ -477,7 +496,15 @@ class ProductionChecklistService:
             else f"Issues: {attribution_issues}",
         )
 
-    def _check_characters(self, session: Session, episode: Episode, report: ChecklistReport) -> None:
+    @staticmethod
+    def _characters_missing_approved_version(session: Session, episode: Episode) -> list[str]:
+        """Slugs of every featured character with no approved, active ``CharacterVersion``.
+
+        Shared by :meth:`_check_characters` (the ``character_versions_approved_and_active``
+        checklist entry) and the Images/Video stage handlers — the same
+        "does this episode have real, approved reference art yet" test,
+        computed once rather than twice.
+        """
         not_ready: list[str] = []
         for character in episode.characters_featured:
             if character.active_version_id is None:
@@ -486,6 +513,10 @@ class ProductionChecklistService:
             version = session.get(CharacterVersion, character.active_version_id)
             if version is None or version.status != CharacterVersionStatus.APPROVED_CANON:
                 not_ready.append(character.slug)
+        return not_ready
+
+    def _check_characters(self, session: Session, episode: Episode, report: ChecklistReport) -> None:
+        not_ready = self._characters_missing_approved_version(session, episode)
         self._add(
             report, "character_versions_approved_and_active", not not_ready,
             True,

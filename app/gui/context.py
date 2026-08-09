@@ -39,6 +39,7 @@ from app.core.services.prompt_template_service import PromptTemplateService
 from app.core.services.scene_service import SceneService
 from app.core.services.script_service import ScriptService
 from app.core.services.short_service import ShortService
+from app.core.services.song_service import SongService
 from app.core.services.storage_service import StorageService
 from app.core.services.unit_of_work import session_scope as _service_session_scope
 from app.logging_setup import configure_logging, get_logger
@@ -103,6 +104,10 @@ class ApplicationContext:
     @cached_property
     def prompt_composer_service(self) -> PromptComposerService:
         return PromptComposerService()
+
+    @cached_property
+    def song_service(self) -> SongService:
+        return SongService()
 
     @cached_property
     def character_service(self) -> CharacterService:
