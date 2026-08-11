@@ -12,7 +12,19 @@ from app.gui.theme.manager import ThemeManager
 
 
 @pytest.fixture()
-def dashboard(qtbot, gui_context: ApplicationContext, theme: ThemeManager) -> DashboardPage:
+def dashboard(
+    qtbot,
+    gui_context: ApplicationContext,
+    theme: ThemeManager,
+    monkeypatch: pytest.MonkeyPatch,
+) -> DashboardPage:
+    # Hermetic regardless of the real machine's ambient environment: every
+    # test built on this fixture (including
+    # test_dashboard_ai_card_shows_mock_provider, which specifically
+    # exercises the mock-only AI Studio card state) must see only
+    # MockProvider as configured, never whatever real provider keys happen
+    # to be set on the developer's machine.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     page = DashboardPage(gui_context, theme)
     qtbot.addWidget(page)
     page.show()  # isVisible() only reflects reality once the widget chain is shown

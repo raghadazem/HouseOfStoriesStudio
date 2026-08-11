@@ -116,7 +116,14 @@ def test_model_reads_env_var_when_not_passed_explicitly(monkeypatch: pytest.Monk
     assert GeminiProvider(api_key="key").model == "gemini-2.5-flash-image"
 
 
-def test_generate_raises_not_configured_when_no_api_key() -> None:
+def test_generate_raises_not_configured_when_no_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # api_key=None means "fall back to the GEMINI_API_KEY env var" (the
+    # documented, intentional behavior GeminiProvider.__init__ uses for its
+    # zero-arg PROVIDER_REGISTRY construction) -- so this test must clear
+    # the env var itself to actually exercise the "not configured" path,
+    # rather than relying on the ambient environment happening to have no
+    # real key set.
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     provider = GeminiProvider(api_key=None, client_factory=lambda api_key: _FakeClient(_FakeModels()))
     with pytest.raises(ProviderNotConfiguredError):
         provider.generate(GenerationRequest(modality="image", prompt_text="x"))

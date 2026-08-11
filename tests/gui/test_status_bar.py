@@ -68,4 +68,10 @@ def test_top_bar_diagnostics_popover_mirrors_status_bar_context(
     window = _window(qtbot, gui_context, gui_settings, qapp)
     diagnostics = window.top_bar._diagnostics
     assert diagnostics._values["database"].text() == gui_context.database_label
-    assert diagnostics._values["provider"].text() == "mock_provider"
+    # Compare against the status bar's own live provider text rather than a
+    # hardcoded "mock_provider" -- this test's job is verifying the two
+    # widgets mirror each other, not asserting which providers happen to be
+    # configured on the machine running the suite (a real provider key may
+    # legitimately be present alongside MockProvider).
+    status_provider_text = window._status_provider.text().removeprefix("AI Provider: ")
+    assert diagnostics._values["provider"].text() == status_provider_text
