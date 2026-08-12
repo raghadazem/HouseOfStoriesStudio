@@ -18,11 +18,8 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Callable
-from dataclasses import replace
-from datetime import datetime
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
@@ -42,16 +39,15 @@ from app.core.ai.generation_runner import (
     MIN_CANDIDATE_COUNT,
     CandidateBatchRequest,
     render_preview,
+    run_character_reference_batch,
 )
 from app.core.db.enums import (
-    ApprovalDecision,
     ApprovalStatus,
     CharacterVersionStatus,
-    GenerationJobStatus,
     PromptCategory,
     PromptType,
 )
-from app.core.models import Asset, Character, CharacterVersion
+from app.core.models import Character, CharacterVersion
 from app.core.services.exceptions import (
     CharacterLockIncompleteError,
     ConflictError,
@@ -63,32 +59,20 @@ from app.gui.context import ApplicationContext
 from app.gui.theme.manager import ThemeManager
 from app.gui.theme.tokens import METRICS
 from app.gui.widgets import (
-    EmptyState,
+    CandidateReviewDialogBase,
     FormDialog,
-    LoadingOverlay,
-    ResponsiveGrid,
     SectionHeader,
     StatusBadge,
     confirm,
     show_error,
     show_warning,
 )
-from app.gui.workers.generation_worker import GenerationWorker, JobSnapshot
 
 _VERSION_STATUS_VARIANT = {
     "draft": "neutral",
     "in_review": "info",
     "approved_canon": "success",
     "archived": "neutral",
-}
-
-_JOB_STATUS_VARIANT = {
-    GenerationJobStatus.PENDING: "neutral",
-    GenerationJobStatus.RUNNING: "info",
-    GenerationJobStatus.SUCCEEDED: "success",
-    GenerationJobStatus.FAILED: "danger",
-    GenerationJobStatus.CANCEL_REQUESTED: "warning",
-    GenerationJobStatus.CANCELLED: "neutral",
 }
 
 _LOCK_FIELD_LABELS = {
@@ -313,124 +297,15 @@ class _GenerateReferenceDialog(FormDialog):
 # --- candidate review grid --------------------------------------------------
 
 
-class _CandidateTile(QFrame):
-    def __init__(
-        self,
-        ctx: ApplicationContext,
-        job,
-        asset: Asset | None,
-        *,
-        on_approve: Callable[[uuid.UUID], None],
-        on_reject: Callable[[uuid.UUID], None],
-        on_add_reference: Callable[[uuid.UUID], None],
-        on_retry: Callable[[uuid.UUID], None],
-        on_cancel: Callable[[uuid.UUID], None],
-        is_reference: bool,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setProperty("class", "card")
-        self.setMinimumWidth(200)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(
-            METRICS.spacing_sm, METRICS.spacing_sm, METRICS.spacing_sm, METRICS.spacing_sm
-        )
-        layout.setSpacing(METRICS.spacing_xs)
+class _CandidateReviewDialog(CandidateReviewDialogBase):
+    """Character-reference candidates: Approve/Reject plus "Add as
+    Reference" for an approved candidate not yet linked as reference art.
 
-        thumb = QLabel("🖼")
-        thumb.setProperty("class", "entityCardThumb")
-        thumb.setFixedSize(140, 140)
-        thumb.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        if asset is not None:
-            pixmap = _load_thumbnail(ctx, asset)
-            if pixmap is not None:
-                thumb.setPixmap(
-                    pixmap.scaled(
-                        140,
-                        140,
-                        Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
-        layout.addWidget(thumb, alignment=Qt.AlignmentFlag.AlignHCenter)
-
-        badge_row = QHBoxLayout()
-        badge_row.addWidget(StatusBadge(job.status.value.replace("_", " ").title(), _JOB_STATUS_VARIANT[job.status]))
-        if is_reference:
-            badge_row.addWidget(StatusBadge("Reference", "success"))
-        badge_row.addStretch(1)
-        layout.addLayout(badge_row)
-
-        meta = QLabel(f"{job.provider_name}" + (f" · {job.provider_model}" if job.provider_model else ""))
-        meta.setProperty("class", "entityCardSubtitle")
-        meta.setWordWrap(True)
-        layout.addWidget(meta)
-
-        duration = _format_duration(job.started_at, job.completed_at)
-        time_label = QLabel(duration)
-        time_label.setProperty("class", "muted")
-        layout.addWidget(time_label)
-
-        if job.error_message:
-            error_label = QLabel(job.error_message)
-            error_label.setProperty("class", "formError")
-            error_label.setWordWrap(True)
-            layout.addWidget(error_label)
-
-        actions = QHBoxLayout()
-        if job.status in (GenerationJobStatus.PENDING, GenerationJobStatus.RUNNING):
-            cancel_btn = QPushButton("Cancel")
-            cancel_btn.clicked.connect(lambda: on_cancel(job.id))
-            actions.addWidget(cancel_btn)
-        elif job.status == GenerationJobStatus.SUCCEEDED and asset is not None:
-            if asset.approval_status == ApprovalStatus.DRAFT:
-                reject_btn = QPushButton("Reject")
-                reject_btn.setProperty("class", "danger")
-                reject_btn.clicked.connect(lambda: on_reject(asset.id))
-                actions.addWidget(reject_btn)
-                approve_btn = QPushButton("Approve")
-                approve_btn.setProperty("class", "primary")
-                approve_btn.clicked.connect(lambda: on_approve(asset.id))
-                actions.addWidget(approve_btn)
-            elif asset.approval_status == ApprovalStatus.APPROVED and not is_reference:
-                add_ref_btn = QPushButton("Add as Reference")
-                add_ref_btn.setProperty("class", "primary")
-                add_ref_btn.clicked.connect(lambda: on_add_reference(asset.id))
-                actions.addWidget(add_ref_btn)
-        elif job.status in (GenerationJobStatus.FAILED, GenerationJobStatus.CANCELLED):
-            retry_btn = QPushButton("Retry")
-            retry_btn.clicked.connect(lambda: on_retry(job.id))
-            actions.addWidget(retry_btn)
-        layout.addLayout(actions)
-
-
-def _format_duration(started_at: datetime | None, completed_at: datetime | None) -> str:
-    if started_at is None:
-        return "Waiting to start…"
-    if completed_at is None:
-        return "In progress…"
-    seconds = (completed_at - started_at).total_seconds()
-    return f"{seconds:.1f}s"
-
-
-def _load_thumbnail(ctx: ApplicationContext, asset: Asset) -> QPixmap | None:
-    try:
-        path = ctx.storage_service.resolve_managed_path(asset.relative_path)
-    except ValidationError:
-        return None
-    if not path.is_file():
-        return None
-    pixmap = QPixmap(str(path))
-    return pixmap if not pixmap.isNull() else None
-
-
-class _CandidateReviewDialog(FormDialog):
-    """Shows one batch's candidates live, and lets the user act on them.
-
-    Owns the ``GenerationWorker`` for the initial batch and for every
-    manual retry started from here — the dialog stays open for the
-    whole review session, refreshing its grid from the database after
-    every worker signal and every approve/reject/add-reference action.
+    Behavior-preserving extraction (Milestone 8): the grid, worker
+    orchestration, and approve/reject/retry/cancel flow now live in
+    ``CandidateReviewDialogBase`` (``app/gui/widgets/candidate_review.py``),
+    shared with the Scene Images review dialog — only "Add as Reference"
+    (this class's one caller-specific action) stays here.
     """
 
     def __init__(
@@ -442,119 +317,39 @@ class _CandidateReviewDialog(FormDialog):
         base_request: CandidateBatchRequest,
         parent: QWidget | None = None,
     ) -> None:
-        super().__init__(
-            "Reference Candidates", icon="🖼", show_save=False, min_width=760, parent=parent
-        )
-        self._ctx = ctx
-        self._theme = theme
         self._character = character
         self._version_id = version_id
-        self._base_request = base_request
-        self._batch_id: uuid.UUID | None = None
-        self._worker: GenerationWorker | None = None
-        self.changed = False  # test/caller hook: did any review decision happen?
+        super().__init__(
+            "Reference Candidates",
+            ctx,
+            theme,
+            base_request,
+            runner=run_character_reference_batch,
+            parent=parent,
+        )
 
-        self._status_label = QLabel("Starting…")
-        self.add_row("Status", self._status_label)
+    def _tertiary_state(self, session, job, asset):
+        if asset is None:
+            return None, None
+        references = {
+            ref.asset_id
+            for ref in self._ctx.character_version_service.list_character_references(
+                session, self._character.id, version_id=self._version_id
+            )
+        }
+        is_reference = asset.id in references
+        badge = "Reference" if is_reference else None
+        action = None
+        if asset.approval_status == ApprovalStatus.APPROVED and not is_reference:
+            action = ("Add as Reference", self._on_add_reference)
+        return badge, action
 
-        self._grid = ResponsiveGrid(card_min_width=200)
-        self.add_row("Candidates", self._grid)
-
-        self._empty_state = EmptyState("No candidates yet.", icon="🖼")
-        self.add_row("", self._empty_state)
-
-        self._overlay = LoadingOverlay(self, theme)
-
-        self._start_worker(base_request)
-
-    # --- worker orchestration -----------------------------------------------
-
-    def _start_worker(self, request: CandidateBatchRequest) -> None:
-        self._status_label.setText("Generating…")
-        self._overlay.start("Generating…")
-        self._worker = GenerationWorker(self._ctx, request, parent=self)
-        self._worker.job_updated.connect(self._on_job_updated)
-        self._worker.batch_finished.connect(self._on_batch_finished)
-        self._worker.batch_failed.connect(self._on_batch_failed)
-        self._worker.start()
-
-    def _on_job_updated(self, snapshot: JobSnapshot) -> None:
-        self._batch_id = snapshot.batch_id
-        self._refresh()
-
-    def _on_batch_finished(self, snapshots: list[JobSnapshot]) -> None:
-        self._overlay.stop()
-        if snapshots:
-            self._batch_id = snapshots[0].batch_id
-        succeeded = sum(1 for s in snapshots if s.status == GenerationJobStatus.SUCCEEDED)
-        self._status_label.setText(f"{succeeded} of {len(snapshots)} candidates generated.")
-        self._refresh()
-
-    def _on_batch_failed(self, message: str) -> None:
-        self._overlay.stop()
-        self._status_label.setText("Generation could not start.")
-        show_error(self, "Generate Reference", message)
-
-    # --- rendering -------------------------------------------------------------
-
-    def _refresh(self) -> None:
-        if self._batch_id is None:
-            return
-        try:
-            with self._ctx.open_session() as session:
-                jobs = self._ctx.generation_job_service.list_jobs_for_batch(session, self._batch_id)
-                references = {
-                    ref.asset_id
-                    for ref in self._ctx.character_version_service.list_character_references(
-                        session, self._character.id, version_id=self._version_id
-                    )
-                }
-                tiles = []
-                for job in jobs:
-                    asset = session.get(Asset, job.result_asset_id) if job.result_asset_id else None
-                    tiles.append(
-                        _CandidateTile(
-                            self._ctx,
-                            job,
-                            asset,
-                            on_approve=self._on_approve,
-                            on_reject=self._on_reject,
-                            on_add_reference=self._on_add_reference,
-                            on_retry=self._on_retry,
-                            on_cancel=self._on_cancel,
-                            is_reference=asset is not None and asset.id in references,
-                        )
-                    )
-        except OperationalError:
-            return
-        self._grid.set_cards(tiles)
-        self._empty_state.setVisible(not tiles)
-
-    # --- actions -----------------------------------------------------------
-
-    def _on_approve(self, asset_id: uuid.UUID) -> None:
-        try:
-            with self._ctx.session_scope() as session:
-                self._ctx.approval_service.decide_asset_review(
-                    session, asset_id, ApprovalDecision.APPROVED
-                )
-        except ServiceError as err:
-            show_error(self, "Approve Candidate", str(err))
-            return
-        self.changed = True
-        self._refresh()
-
-    def _on_reject(self, asset_id: uuid.UUID) -> None:
-        try:
-            with self._ctx.session_scope() as session:
-                self._ctx.approval_service.decide_asset_review(
-                    session, asset_id, ApprovalDecision.REJECTED, notes="Rejected during candidate review."
-                )
-        except ServiceError as err:
-            show_error(self, "Reject Candidate", str(err))
-            return
-        self.changed = True
-        self._refresh()
+    def _show_error(self, title: str, message: str) -> None:
+        # Routes through this module's own show_error (rather than the
+        # base class's) so tests that monkeypatch cvw.show_error keep
+        # intercepting every error this dialog surfaces, unchanged from
+        # before the Milestone 8 candidate-review extraction.
+        show_error(self, title, message)
 
     def _on_add_reference(self, asset_id: uuid.UUID) -> None:
         try:
@@ -570,24 +365,6 @@ class _CandidateReviewDialog(FormDialog):
             return
         self.changed = True
         self._refresh()
-
-    def _on_retry(self, job_id: uuid.UUID) -> None:
-        retry_request = replace(self._base_request, candidate_count=1, retry_of_job_id=job_id)
-        self._start_worker(retry_request)
-
-    def _on_cancel(self, job_id: uuid.UUID) -> None:
-        try:
-            with self._ctx.session_scope() as session:
-                self._ctx.generation_job_service.request_cancel(session, job_id)
-        except ServiceError as err:
-            show_error(self, "Cancel", str(err))
-            return
-        self._refresh()
-
-    def closeEvent(self, event) -> None:
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.wait(200)
-        super().closeEvent(event)
 
 
 # --- version detail / action hub -------------------------------------------
@@ -629,18 +406,24 @@ class _CharacterVersionDetailDialog(FormDialog):
                 lock = self._ctx.character_version_service.validate_character_lock(
                     session, self._version_id
                 )
-                reference_count = len(
-                    self._ctx.character_version_service.list_character_references(
-                        session, self._character_id, version_id=self._version_id
-                    )
+                references = self._ctx.character_version_service.list_character_references(
+                    session, self._character_id, version_id=self._version_id
                 )
+                # Detach the plain values this dialog needs after the
+                # session closes — reference.asset is a lazy relationship,
+                # so it must be read here, not later (see
+                # episode_workspace_page.py's same pattern).
+                reference_rows = [
+                    (ref.id, ref.label, ref.is_current_canon, ref.asset.original_filename)
+                    for ref in references
+                ]
         except OperationalError:
             show_error(self, "Character Version", "The database is unavailable.")
             self.reject()
             return
-        self._render(character, version, lock, reference_count)
+        self._render(character, version, lock, reference_rows)
 
-    def _render(self, character: Character, version: CharacterVersion, lock, reference_count: int) -> None:
+    def _render(self, character: Character, version: CharacterVersion, lock, reference_rows: list) -> None:
         self._version_number = version.version_number
         _clear_layout(self._body)
 
@@ -683,9 +466,16 @@ class _CharacterVersionDetailDialog(FormDialog):
             row.setWordWrap(True)
             self._body.addWidget(row)
 
-        self._body.addWidget(
-            QLabel(f"Approved reference images: {reference_count}")
-        )
+        self._body.addWidget(SectionHeader(f"Reference Images ({len(reference_rows)})"))
+        if reference_rows:
+            for reference_id, label, is_canon, filename in reference_rows:
+                self._body.addWidget(
+                    self._build_reference_row(reference_id, label, is_canon, filename)
+                )
+        else:
+            empty_label = QLabel("No reference images yet — use Generate Reference below.")
+            empty_label.setProperty("class", "muted")
+            self._body.addWidget(empty_label)
 
         actions = QHBoxLayout()
         is_draft = version.status == CharacterVersionStatus.DRAFT
@@ -725,6 +515,61 @@ class _CharacterVersionDetailDialog(FormDialog):
 
         actions.addStretch(1)
         self._body.addLayout(actions)
+
+    def _build_reference_row(
+        self, reference_id: uuid.UUID, label: str | None, is_canon: bool, filename: str
+    ) -> QFrame:
+        """One reference image row: which one is Canon, and a one-click
+        way to make another one Canon instead (Milestone 8's Canon
+        Reference action — see ``CharacterVersionService.set_canon_reference``,
+        which unsets any previous canon reference in the same call, so
+        exactly one reference is ever canon)."""
+        row = QFrame()
+        row.setProperty("class", "reviewRow")
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(
+            METRICS.spacing_md, METRICS.spacing_sm, METRICS.spacing_md, METRICS.spacing_sm
+        )
+        row_layout.setSpacing(METRICS.spacing_md)
+
+        icon = QLabel("🖼")
+        icon.setProperty("class", "iconChip")
+        icon.setFixedSize(40, 40)
+        icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        row_layout.addWidget(icon)
+
+        text_column = QVBoxLayout()
+        text_column.setSpacing(2)
+        title = QLabel(label or filename)
+        title.setProperty("class", "entityRowTitle")
+        text_column.addWidget(title)
+        subtitle = QLabel(filename)
+        subtitle.setProperty("class", "entityRowSubtitle")
+        text_column.addWidget(subtitle)
+        row_layout.addLayout(text_column, stretch=1)
+
+        if is_canon:
+            row_layout.addWidget(StatusBadge("★ Canon", "success"))
+        else:
+            make_canon_btn = QPushButton("Make Canon")
+            make_canon_btn.clicked.connect(
+                lambda _checked=False, rid=reference_id: self._on_make_canon(rid)
+            )
+            row_layout.addWidget(make_canon_btn)
+
+        return row
+
+    def _on_make_canon(self, reference_id: uuid.UUID) -> None:
+        try:
+            with self._ctx.session_scope() as session:
+                self._ctx.character_version_service.set_canon_reference(session, reference_id)
+        except ServiceError as err:
+            show_error(self, "Make Canon", str(err))
+            return
+        self.needs_refresh = True
+        self._reload_and_render()
+        if self._on_feedback:
+            self._on_feedback("Canon reference updated.", "success")
 
     def _on_edit(self) -> None:
         with self._ctx.open_session() as session:

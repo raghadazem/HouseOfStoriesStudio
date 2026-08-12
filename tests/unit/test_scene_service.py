@@ -348,3 +348,80 @@ def test_build_voice_package_ignores_scenes_with_no_dialogue(session: Session) -
     ss.add_scene(session, episode.id, description="A silent visual beat.")
 
     assert ss.build_voice_package(session, episode.id) == []
+
+
+# --- set_scene_key_image (Milestone 8) ---------------------------------------
+
+
+def _approved_scene_asset(session: Session, scene_id: uuid.UUID, **overrides) -> Asset:
+    defaults = {
+        "asset_type": AssetType.IMAGE,
+        "original_filename": "candidate.png",
+        "relative_path": f"episodes/ep001/images/{uuid.uuid4()}.png",
+        "checksum": uuid.uuid4().hex.ljust(64, "0"),
+        "scene_id": scene_id,
+        "approval_status": ApprovalStatus.APPROVED,
+    }
+    defaults.update(overrides)
+    asset = Asset(**defaults)
+    session.add(asset)
+    session.flush()
+    return asset
+
+
+def test_set_scene_key_image_assigns_role(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    asset = _approved_scene_asset(session, scene.id)
+
+    result = ss.set_scene_key_image(session, scene.id, asset.id)
+
+    assert result.role == "final_scene_image"
+
+
+def test_set_scene_key_image_replacing_preserves_old_as_approved(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    first = _approved_scene_asset(session, scene.id)
+    second = _approved_scene_asset(session, scene.id)
+
+    ss.set_scene_key_image(session, scene.id, first.id)
+    ss.set_scene_key_image(session, scene.id, second.id)
+
+    session.refresh(first)
+    session.refresh(second)
+    assert first.role is None
+    assert first.approval_status == ApprovalStatus.APPROVED  # preserved, not deleted
+    assert second.role == "final_scene_image"
+
+
+def test_set_scene_key_image_rejects_asset_from_another_scene(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene_a = ss.add_scene(session, episode.id)
+    scene_b = ss.add_scene(session, episode.id)
+    asset = _approved_scene_asset(session, scene_b.id)
+
+    with pytest.raises(ValidationError, match="does not belong"):
+        ss.set_scene_key_image(session, scene_a.id, asset.id)
+
+
+def test_set_scene_key_image_rejects_unapproved_asset(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    asset = _approved_scene_asset(session, scene.id, approval_status=ApprovalStatus.DRAFT)
+
+    with pytest.raises(ValidationError, match="approved"):
+        ss.set_scene_key_image(session, scene.id, asset.id)
+
+
+def test_set_scene_key_image_rejects_unknown_asset(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+
+    with pytest.raises(NotFoundError):
+        ss.set_scene_key_image(session, scene.id, uuid.uuid4())

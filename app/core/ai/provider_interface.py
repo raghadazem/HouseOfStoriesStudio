@@ -47,6 +47,27 @@ class GenerationResult:
     raw_response_summary: str | None = None
 
 
+@dataclass(frozen=True)
+class ProviderCapabilities:
+    """What a provider's underlying model documents it can accept.
+
+    Deliberately minimal — only the one field Milestone 8 actually
+    needs (how many character-consistency reference images a scene
+    generation request may include). Object/style reference capacity
+    are real, separately-documented Gemini limits, but nothing in this
+    codebase sends those categories yet, so no field exists for them —
+    adding one later, if a workflow actually needs it, is a pure
+    additive change to this dataclass, not a redesign.
+
+    Read only by ``ReferenceSelectionService``/
+    ``SceneGenerationReadinessService`` — never hardcoded into the GUI
+    or any domain model, so a provider/model capacity change is a
+    one-line edit in that provider's own file.
+    """
+
+    max_character_references: int | None = None  # None = no known/enforced limit
+
+
 class AIProvider(ABC):
     """Interface every AI provider (mock or real) must implement.
 
@@ -58,6 +79,7 @@ class AIProvider(ABC):
 
     name: ClassVar[str]
     supported_modalities: ClassVar[frozenset[str]]
+    capabilities: ClassVar[ProviderCapabilities] = ProviderCapabilities()
 
     @abstractmethod
     def is_configured(self) -> bool: ...

@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db.enums import ApprovalStatus
 from app.core.models import Asset, Character, Episode, Scene
+from app.core.models.asset import ROLE_FINAL_SCENE_IMAGE
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.services.prompt_composer_service import PromptComposerService
@@ -302,6 +303,43 @@ class SceneService:
             prompt_text=composed.prompt_text,
             negative_prompt_text=composed.negative_prompt_text,
         )
+
+    def set_scene_key_image(self, session: Session, scene_id: uuid.UUID, asset_id: uuid.UUID) -> Asset:
+        """Make ``asset_id`` the scene's current approved key image.
+
+        The only path that may ever assign ``ROLE_FINAL_SCENE_IMAGE``
+        (``AssetImportService`` refuses it — see
+        ``docs/32_MILESTONE_8_SCENE_IMAGE_GENERATION_STATUS.md``), which
+        is what guarantees at most one ``Asset`` holds it per scene:
+        whatever ``Asset`` currently holds the role for this scene has
+        it cleared first, in the same flush — it stays ``approved`` and
+        fully intact, never deleted, never re-selected automatically.
+
+        Raises:
+            NotFoundError: The scene or asset doesn't exist.
+            ValidationError: The asset doesn't belong to this scene, or
+                isn't ``approved``.
+        """
+        scene = self.get_scene(session, scene_id)
+        asset = session.get(Asset, asset_id)
+        if asset is None:
+            raise NotFoundError(f"Asset {asset_id} not found.")
+        if asset.scene_id != scene.id:
+            raise ValidationError(f"Asset {asset_id} does not belong to Scene {scene_id}.")
+        if asset.approval_status != ApprovalStatus.APPROVED:
+            raise ValidationError("Only an approved asset may become the scene's key image.")
+
+        previous = (
+            session.query(Asset)
+            .filter_by(scene_id=scene_id, role=ROLE_FINAL_SCENE_IMAGE)
+            .filter(Asset.id != asset_id)
+            .all()
+        )
+        for old in previous:
+            old.role = None
+        asset.role = ROLE_FINAL_SCENE_IMAGE
+        session.flush()
+        return asset
 
     def list_episode_scenes(self, session: Session, episode_id: uuid.UUID) -> list[Scene]:
         return (

@@ -173,6 +173,47 @@ def test_generate_includes_negative_prompt_when_present() -> None:
     assert any("no cats" in str(item) for item in contents)
 
 
+# --- capabilities ------------------------------------------------------------
+
+
+def test_capabilities_max_character_references_is_four() -> None:
+    assert GeminiProvider(api_key="key").capabilities.max_character_references == 4
+
+
+# --- image_size ----------------------------------------------------------------
+
+
+def test_generate_defaults_image_size_to_1k_when_not_requested() -> None:
+    models = _FakeModels(response=_success_response())
+    provider = _provider(models)
+
+    provider.generate(GenerationRequest(modality="image", prompt_text="a bird"))
+
+    assert models.calls[0]["config"].image_config.image_size == "1K"
+
+
+def test_generate_uses_requested_image_size() -> None:
+    models = _FakeModels(response=_success_response())
+    provider = _provider(models)
+
+    provider.generate(
+        GenerationRequest(modality="image", prompt_text="a bird", parameters={"image_size": "2K"})
+    )
+
+    assert models.calls[0]["config"].image_config.image_size == "2K"
+
+
+def test_generate_falls_back_to_default_for_unrecognized_image_size() -> None:
+    models = _FakeModels(response=_success_response())
+    provider = _provider(models)
+
+    provider.generate(
+        GenerationRequest(modality="image", prompt_text="a bird", parameters={"image_size": "8K"})
+    )
+
+    assert models.calls[0]["config"].image_config.image_size == "1K"
+
+
 # --- error mapping -----------------------------------------------------
 
 

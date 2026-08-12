@@ -9,6 +9,7 @@ from __future__ import annotations
 from app.gui.widgets.action_card import ActionCard
 from app.gui.widgets.activity_timeline import ActivityEntry, ActivityTimeline, parse_log_line
 from app.gui.widgets.app_logo import AppLogo
+from app.gui.widgets.candidate_review import CandidateReviewDialogBase, CandidateTile
 from app.gui.widgets.dialogs import (
     confirm,
     show_error,
@@ -42,6 +43,8 @@ __all__ = [
     "ActivityEntry",
     "ActivityTimeline",
     "AppLogo",
+    "CandidateReviewDialogBase",
+    "CandidateTile",
     "ElevatedCard",
     "EmptyState",
     "EntityCard",

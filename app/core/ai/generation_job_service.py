@@ -258,11 +258,14 @@ class GenerationJobService:
         session: Session,
         *,
         character_version_id: uuid.UUID | None = None,
+        scene_id: uuid.UUID | None = None,
         status: GenerationJobStatus | None = None,
     ) -> list[GenerationJob]:
         query = session.query(GenerationJob)
         if character_version_id is not None:
             query = query.filter_by(character_version_id=character_version_id)
+        if scene_id is not None:
+            query = query.filter_by(scene_id=scene_id)
         if status is not None:
             query = query.filter_by(status=status)
         return query.order_by(GenerationJob.created_at.desc()).all()

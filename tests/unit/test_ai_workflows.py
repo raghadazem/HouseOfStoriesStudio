@@ -207,6 +207,86 @@ def test_scene_image_workflow_requires_episode_and_scene(
         workflow.run(ctx)
 
 
+def test_scene_image_workflow_direct_text_path_bypasses_prompt_engine(
+    session: Session, app_config: AppConfig
+) -> None:
+    """rendered_prompt_text set, no prompt_template_id at all -- proves
+    the direct path never touches PromptEngine/PromptTemplate."""
+    episode = _episode(session)
+    scene = _scene(session, episode)
+    workflow = SceneImageWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        prompt_template_id=None,
+        episode_id=episode.id,
+        scene_id=scene.id,
+        rendered_prompt_text="A quiet forest at dawn.",
+        rendered_negative_prompt_text="no text overlays",
+    )
+
+    result = workflow.run(ctx)
+
+    assert result.generation_request.prompt_text == "A quiet forest at dawn."
+    assert result.generation_request.negative_prompt_text == "no text overlays"
+    assert result.asset.prompt_used_id is None  # no PromptTemplate was ever involved
+    assert result.asset.scene_id == scene.id
+
+
+def test_scene_image_workflow_direct_text_path_sends_multiple_reference_paths(
+    session: Session, app_config: AppConfig
+) -> None:
+    """Proves the direct-text path is not capped at one character —
+    the exact multi-character-consistency gap Milestone 8 closes."""
+    episode = _episode(session)
+    scene = _scene(session, episode)
+    workflow = SceneImageWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        episode_id=episode.id,
+        scene_id=scene.id,
+        rendered_prompt_text="Melissa and Bilsan share a picnic.",
+        rendered_reference_asset_paths=["characters/melissa/v01/ref.png", "characters/bilsan/v01/ref.png"],
+    )
+
+    result = workflow.run(ctx)
+
+    assert result.generation_request.reference_asset_paths == [
+        "characters/melissa/v01/ref.png",
+        "characters/bilsan/v01/ref.png",
+    ]
+
+
+def test_scene_image_workflow_legacy_template_path_still_works(
+    session: Session, app_config: AppConfig
+) -> None:
+    """rendered_prompt_text left unset (default None) -- the pre-Milestone-8
+    template path must still work unchanged, byte for byte."""
+    episode = _episode(session)
+    scene = _scene(session, episode)
+    template = _template(
+        session,
+        name="scene_legacy",
+        category=PromptCategory.IMAGE,
+        prompt_type=PromptType.IMAGE,
+        text_en="A quiet forest.",
+    )
+    workflow = SceneImageWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        prompt_template_id=template.id,
+        episode_id=episode.id,
+        scene_id=scene.id,
+    )
+
+    result = workflow.run(ctx)
+
+    assert result.generation_request.prompt_text == "A quiet forest."
+    assert result.asset.prompt_used_id == template.id
+
+
 # --- VoiceLineWorkflow ---------------------------------------------------
 
 

@@ -9,7 +9,7 @@ wiring is exactly what these tests must prove works.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from app.core.db.enums import (
     ApprovalStatus,
@@ -73,19 +73,24 @@ def _template_id(gui_context: ApplicationContext) -> object:
 
 
 def _approved_reference_asset(gui_context: ApplicationContext, character_id, version_id) -> None:
+    _add_reference(gui_context, character_id, version_id, suffix="a")
+
+
+def _add_reference(gui_context: ApplicationContext, character_id, version_id, *, suffix: str) -> object:
     with gui_context.session_scope() as session:
         asset = Asset(
             asset_type=AssetType.IMAGE,
-            original_filename="ref.png",
-            relative_path="characters/melissa/ref.png",
-            checksum="a" * 64,
+            original_filename=f"ref_{suffix}.png",
+            relative_path=f"characters/melissa/ref_{suffix}.png",
+            checksum=suffix * 64,
             approval_status=ApprovalStatus.APPROVED,
         )
         session.add(asset)
         session.flush()
-        gui_context.character_version_service.add_character_reference(
+        reference = gui_context.character_version_service.add_character_reference(
             session, character_id=character_id, character_version_id=version_id, asset_id=asset.id
         )
+        return reference.id
 
 
 # --- _EditCharacterVersionDialog --------------------------------------------
@@ -390,3 +395,54 @@ def test_candidate_review_dialog_cancel_pending_job(
     with gui_context.open_session() as session:
         job = gui_context.generation_job_service.get_job(session, job_id)
     assert job.status == GenerationJobStatus.SUCCEEDED
+
+
+# --- Canon Reference action (Milestone 8) -----------------------------------
+
+
+def test_detail_dialog_shows_canon_badge_and_make_canon_button(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    character_id = _character_id(gui_context)
+    version_id = _draft_version_id(gui_context, character_id, **_LOCK_FIELDS)
+    reference_id = _add_reference(gui_context, character_id, version_id, suffix="a")
+    with gui_context.session_scope() as session:
+        gui_context.character_version_service.set_canon_reference(session, reference_id)
+    _add_reference(gui_context, character_id, version_id, suffix="b")  # not canon
+
+    with gui_context.open_session() as session:
+        character = gui_context.character_service.get_character(session, character_id)
+        dialog = cvw._CharacterVersionDetailDialog(gui_context, theme, character, version_id)
+    qtbot.addWidget(dialog)
+
+    labels = [label.text() for label in dialog.findChildren(QLabel)]
+    assert any("Canon" in text for text in labels)
+    buttons = [btn.text() for btn in dialog.findChildren(QPushButton)]
+    # Exactly one non-canon reference exists, so exactly one Make Canon button.
+    assert buttons.count("Make Canon") == 1
+
+
+def test_detail_dialog_make_canon_switches_canon_reference(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    character_id = _character_id(gui_context)
+    version_id = _draft_version_id(gui_context, character_id, **_LOCK_FIELDS)
+    reference_a = _add_reference(gui_context, character_id, version_id, suffix="a")
+    with gui_context.session_scope() as session:
+        gui_context.character_version_service.set_canon_reference(session, reference_a)
+    reference_b = _add_reference(gui_context, character_id, version_id, suffix="b")
+
+    with gui_context.open_session() as session:
+        character = gui_context.character_service.get_character(session, character_id)
+        dialog = cvw._CharacterVersionDetailDialog(gui_context, theme, character, version_id)
+    qtbot.addWidget(dialog)
+
+    dialog._on_make_canon(reference_b)
+
+    with gui_context.open_session() as session:
+        canon = gui_context.character_version_service.get_canon_reference(session, version_id)
+        assert canon.id == reference_b
+    assert dialog.needs_refresh is True
+    # Exactly one canon badge remains — never both references marked canon.
+    labels = [label.text() for label in dialog.findChildren(QLabel)]
+    assert labels.count("★ Canon") == 1

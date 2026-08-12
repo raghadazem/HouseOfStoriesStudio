@@ -215,6 +215,7 @@ class ApprovalService:
         *,
         episode_id: uuid.UUID | None = None,
         character_version_id: uuid.UUID | None = None,
+        scene_id: uuid.UUID | None = None,
         source_tool: str | None = None,
     ) -> list[Asset]:
         """The asset review queue: every asset still awaiting a decision.
@@ -224,13 +225,16 @@ class ApprovalService:
         asset a human imported and one an AI workflow generated (see
         ``docs/18_AI_ARCHITECTURE_PLAN.md`` §10). Filter by
         ``source_tool`` (e.g. ``"mock_provider"``) to see only
-        AI-generated candidates.
+        AI-generated candidates. ``scene_id`` (Milestone 8) scopes the
+        queue to one scene's own candidate-review grid.
         """
         query = session.query(Asset).filter_by(approval_status=ApprovalStatus.DRAFT)
         if episode_id is not None:
             query = query.filter_by(episode_id=episode_id)
         if character_version_id is not None:
             query = query.filter_by(character_version_id=character_version_id)
+        if scene_id is not None:
+            query = query.filter_by(scene_id=scene_id)
         if source_tool is not None:
             query = query.filter_by(source_tool=source_tool)
         return query.order_by(Asset.created_at).all()

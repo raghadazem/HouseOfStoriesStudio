@@ -38,7 +38,12 @@ from app.core.ai.exceptions import (
     ProviderRequestError,
     ProviderTimeoutError,
 )
-from app.core.ai.provider_interface import AIProvider, GenerationRequest, GenerationResult
+from app.core.ai.provider_interface import (
+    AIProvider,
+    GenerationRequest,
+    GenerationResult,
+    ProviderCapabilities,
+)
 from app.core.services.storage_service import StorageService
 
 ENV_API_KEY = "GEMINI_API_KEY"
@@ -46,6 +51,21 @@ ENV_MODEL = "HOS_GEMINI_IMAGE_MODEL"
 DEFAULT_MODEL = "gemini-3.1-flash-image"
 
 _DEFAULT_EXTENSION = ".png"
+
+# Documented on ai.google.dev/gemini-api/docs/image-generation for
+# gemini-3.1-flash-image: "Up to 4 images of characters to maintain
+# character consistency" — a separate quota from the model's object
+# (10) and style (3) reference categories, neither of which this
+# codebase sends. See docs/32_MILESTONE_8_SCENE_IMAGE_GENERATION_STATUS.md.
+_CAPABILITIES = ProviderCapabilities(max_character_references=4)
+
+# Gemini's documented output-resolution parameter (image_config.image_size).
+# 1K is both the platform default and this app's default for candidate
+# exploration; 2K is the only opt-in "higher quality" tier this app
+# exposes (see the Images tab) — 512px/4K are intentionally never
+# requested by anything in this codebase.
+DEFAULT_IMAGE_SIZE = "1K"
+_VALID_IMAGE_SIZES = frozenset({"512px", "1K", "2K", "4K"})
 
 ClientFactory = Callable[[str], genai.Client]
 
@@ -59,6 +79,7 @@ class GeminiProvider(AIProvider):
 
     name = "gemini"
     supported_modalities = frozenset({"image"})
+    capabilities = _CAPABILITIES
 
     def __init__(
         self,
@@ -104,7 +125,11 @@ class GeminiProvider(AIProvider):
 
         client = self._get_client()
         contents = self._build_contents(request)
-        config = genai_types.GenerateContentConfig(response_modalities=["IMAGE"])
+        image_size = self._resolve_image_size(request)
+        config = genai_types.GenerateContentConfig(
+            response_modalities=["IMAGE"],
+            image_config=genai_types.ImageConfig(image_size=image_size),
+        )
 
         try:
             response = client.models.generate_content(
@@ -132,6 +157,21 @@ class GeminiProvider(AIProvider):
         if self._client is None:
             self._client = self._client_factory(self._api_key)  # type: ignore[arg-type]
         return self._client
+
+    @staticmethod
+    def _resolve_image_size(request: GenerationRequest) -> str:
+        """Read ``image_size`` from the request's parameters, defaulting to 1K.
+
+        The exact value used is snapshotted onto ``GenerationJob.parameters``
+        by ``generation_runner`` before this method ever runs — this is
+        only where the value actually gets *applied* to the real call.
+        An unrecognized value falls back to the default rather than
+        being sent to Gemini as-is, since ``GenerateContentConfig``
+        would otherwise surface an opaque provider-side error instead of
+        a clear one.
+        """
+        requested = request.parameters.get("image_size", DEFAULT_IMAGE_SIZE)
+        return requested if requested in _VALID_IMAGE_SIZES else DEFAULT_IMAGE_SIZE
 
     def _build_contents(self, request: GenerationRequest) -> list[object]:
         """Build the ``contents`` list: prompt text, then reference images.

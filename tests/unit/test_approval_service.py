@@ -10,7 +10,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db.enums import ApprovalDecision, ApprovalStatus, AssetType
-from app.core.models import Asset, Episode
+from app.core.models import Asset, Episode, Scene
 from app.core.models.approval import ApprovalRecord
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import NotFoundError, ValidationError
@@ -257,6 +257,25 @@ def test_list_pending_review_assets_filters_by_source_tool(session: Session) -> 
     pending = service.list_pending_review_assets(session, source_tool="mock_provider")
 
     assert [a.id for a in pending] == [generated.id]
+
+
+def test_list_pending_review_assets_filters_by_scene(session: Session) -> None:
+    service = ApprovalService()
+    episode = Episode(slug="ep001_scene_test", number=2, title_ar="ع", title_en="Test", lesson="Sharing")
+    session.add(episode)
+    session.flush()
+    scene = Scene(episode_id=episode.id, order_index=1)
+    session.add(scene)
+    session.flush()
+
+    in_scene = _asset(
+        session, relative_path="episodes/ep001/images/scene.png", checksum="e" * 64, scene_id=scene.id
+    )
+    _asset(session, relative_path="episodes/ep001/images/other.png", checksum="f" * 64)
+
+    pending = service.list_pending_review_assets(session, scene_id=scene.id)
+
+    assert [a.id for a in pending] == [in_scene.id]
 
 
 # --- Milestone 4B: decide_asset_review (the review queue's Approve/Reject) ---

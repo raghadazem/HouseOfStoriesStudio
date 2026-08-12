@@ -351,3 +351,98 @@ def test_approve_character_version_succeeds_with_complete_lock(session: Session)
     version = cvs.create_character_version(session, character.id)
     _approve_with_complete_lock(session, cvs, character, version.id)
     assert version.status == CharacterVersionStatus.APPROVED_CANON
+
+
+# --- Canon Reference (Milestone 8) ------------------------------------------
+
+
+def test_get_canon_reference_returns_none_when_none_marked(session: Session) -> None:
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)
+    asset = _approved_image_asset(session)
+    cvs.add_character_reference(
+        session, character_id=character.id, character_version_id=version.id, asset_id=asset.id
+    )
+
+    assert cvs.get_canon_reference(session, version.id) is None
+
+
+def test_get_canon_reference_returns_the_marked_reference(session: Session) -> None:
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)
+    asset = _approved_image_asset(session)
+    reference = cvs.add_character_reference(
+        session,
+        character_id=character.id,
+        character_version_id=version.id,
+        asset_id=asset.id,
+        is_current_canon=True,
+    )
+
+    canon = cvs.get_canon_reference(session, version.id)
+    assert canon is not None
+    assert canon.id == reference.id
+
+
+def test_get_canon_reference_returns_none_when_ambiguous(session: Session) -> None:
+    """Two references both flagged canon (a data-integrity edge case,
+    never producible via set_canon_reference itself) must never let a
+    caller silently guess which one wins."""
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)
+    asset_a = _approved_image_asset(session, relative_path="characters/melissa/versions/v01/a.png", checksum="a" * 64)
+    asset_b = _approved_image_asset(session, relative_path="characters/melissa/versions/v01/b.png", checksum="b" * 64)
+    cvs.add_character_reference(
+        session, character_id=character.id, character_version_id=version.id,
+        asset_id=asset_a.id, is_current_canon=True,
+    )
+    cvs.add_character_reference(
+        session, character_id=character.id, character_version_id=version.id,
+        asset_id=asset_b.id, is_current_canon=True,
+    )
+
+    assert cvs.get_canon_reference(session, version.id) is None
+
+
+def test_set_canon_reference_marks_the_given_reference(session: Session) -> None:
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)
+    asset = _approved_image_asset(session)
+    reference = cvs.add_character_reference(
+        session, character_id=character.id, character_version_id=version.id, asset_id=asset.id
+    )
+
+    cvs.set_canon_reference(session, reference.id)
+
+    assert cvs.get_canon_reference(session, version.id).id == reference.id
+
+
+def test_set_canon_reference_unsets_previous_sibling_canon(session: Session) -> None:
+    cvs = CharacterVersionService()
+    character = _character(session)
+    version = cvs.create_character_version(session, character.id)
+    asset_a = _approved_image_asset(session, relative_path="characters/melissa/versions/v01/a.png", checksum="a" * 64)
+    asset_b = _approved_image_asset(session, relative_path="characters/melissa/versions/v01/b.png", checksum="b" * 64)
+    ref_a = cvs.add_character_reference(
+        session, character_id=character.id, character_version_id=version.id,
+        asset_id=asset_a.id, is_current_canon=True,
+    )
+    ref_b = cvs.add_character_reference(
+        session, character_id=character.id, character_version_id=version.id, asset_id=asset_b.id,
+    )
+
+    cvs.set_canon_reference(session, ref_b.id)
+
+    assert cvs.get_canon_reference(session, version.id).id == ref_b.id
+    session.refresh(ref_a)
+    assert ref_a.is_current_canon is False
+
+
+def test_set_canon_reference_raises_not_found_for_unknown_reference(session: Session) -> None:
+    cvs = CharacterVersionService()
+    with pytest.raises(NotFoundError):
+        cvs.set_canon_reference(session, uuid.uuid4())

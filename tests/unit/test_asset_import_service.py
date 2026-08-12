@@ -98,6 +98,24 @@ def test_import_asset_rejects_unsupported_classification(
         service.import_asset(session, request)
 
 
+def test_import_asset_rejects_reserved_scene_key_image_role(
+    session: Session, app_config: AppConfig, source_file: Path
+) -> None:
+    """The generic/manual import path must never be able to assign
+    "final_scene_image" — only SceneService.set_scene_key_image may,
+    since that's what guarantees at most one Asset holds it per scene
+    (see docs/32_MILESTONE_8_SCENE_IMAGE_GENERATION_STATUS.md)."""
+    service = _service(app_config)
+    request = ImportRequest(
+        source_path=source_file, asset_type=AssetType.IMAGE, role="final_scene_image"
+    )
+    with pytest.raises(ValidationError, match="reserved"):
+        service.import_asset(session, request)
+
+    # Nothing was imported: no DB row, no file copied anywhere under production/.
+    assert session.query(Asset).count() == 0
+
+
 def test_import_asset_detects_duplicate_by_checksum(
     session: Session, app_config: AppConfig, source_file: Path
 ) -> None:

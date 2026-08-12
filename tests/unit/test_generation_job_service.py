@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.ai.generation_job_service import GenerationJobService
 from app.core.db.enums import ApprovalStatus, AssetType, GenerationJobStatus
-from app.core.models import Asset, Character, CharacterVersion
+from app.core.models import Asset, Character, CharacterVersion, Episode, Scene
 from app.core.services.exceptions import InvalidTransitionError, NotFoundError
 
 
@@ -43,6 +43,19 @@ def _real_character_version_id(session: Session) -> uuid.UUID:
     session.add(version)
     session.flush()
     return version.id
+
+
+def _real_scene_id(session: Session) -> uuid.UUID:
+    episode = Episode(
+        slug=f"ep-{uuid.uuid4().hex[:8]}", number=int(uuid.uuid4().int % 100000),
+        title_ar="ح", title_en="Ep", lesson="L",
+    )
+    session.add(episode)
+    session.flush()
+    scene = Scene(episode_id=episode.id, order_index=1)
+    session.add(scene)
+    session.flush()
+    return scene.id
 
 
 def _create(session: Session, jobs: GenerationJobService, **overrides):
@@ -307,6 +320,17 @@ def test_list_jobs_filters_by_character_version_and_status(session: Session) -> 
     result = jobs.list_jobs(
         session, character_version_id=version_id, status=GenerationJobStatus.SUCCEEDED
     )
+
+    assert [j.id for j in result] == [match.id]
+
+
+def test_list_jobs_filters_by_scene_id(session: Session) -> None:
+    jobs = GenerationJobService()
+    scene_id = _real_scene_id(session)
+    match = _create(session, jobs, scene_id=scene_id, workflow_name="scene_image")
+    _create(session, jobs, scene_id=_real_scene_id(session), workflow_name="scene_image")
+
+    result = jobs.list_jobs(session, scene_id=scene_id)
 
     assert [j.id for j in result] == [match.id]
 

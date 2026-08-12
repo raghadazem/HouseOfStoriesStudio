@@ -345,6 +345,52 @@ class CharacterVersionService:
         session.delete(reference)
         session.flush()
 
+    def get_canon_reference(
+        self, session: Session, version_id: uuid.UUID
+    ) -> CharacterReference | None:
+        """The single reference marked ``is_current_canon`` for this version.
+
+        Milestone 8's scene generation requires a strict, deterministic
+        canon reference per character — stricter than
+        :meth:`validate_character_lock`, which only requires *some*
+        reference to exist. Returns ``None`` both when zero references
+        are marked canon and when more than one is (an ambiguous,
+        data-integrity state that :meth:`set_canon_reference` prevents
+        going forward, but that old data could theoretically be in) —
+        callers must never guess which one "wins" in that case.
+        """
+        canon = (
+            session.query(CharacterReference)
+            .filter_by(character_version_id=version_id, is_current_canon=True)
+            .all()
+        )
+        return canon[0] if len(canon) == 1 else None
+
+    def set_canon_reference(self, session: Session, reference_id: uuid.UUID) -> CharacterReference:
+        """Mark ``reference_id`` as the current canon reference for its version.
+
+        Unsets ``is_current_canon`` on every sibling reference sharing
+        the same ``character_version_id`` first, in the same flush —
+        this is the only path that may ever set the flag, so at most
+        one reference is ever canon for a given version, making
+        :meth:`get_canon_reference` deterministic by construction.
+        """
+        reference = session.get(CharacterReference, reference_id)
+        if reference is None:
+            raise NotFoundError(f"CharacterReference {reference_id} not found.")
+        if reference.character_version_id is not None:
+            siblings = (
+                session.query(CharacterReference)
+                .filter_by(character_version_id=reference.character_version_id)
+                .all()
+            )
+            for sibling in siblings:
+                sibling.is_current_canon = sibling.id == reference.id
+        else:
+            reference.is_current_canon = True
+        session.flush()
+        return reference
+
     def list_character_references(
         self,
         session: Session,

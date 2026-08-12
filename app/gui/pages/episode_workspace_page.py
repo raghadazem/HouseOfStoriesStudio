@@ -8,11 +8,16 @@ full scene editor). Never touches ``app.core`` directly — every read
 and write goes through ``ApplicationContext``, exactly like every other
 page.
 
-No AI provider is called anywhere in this file. The Images/Voice/Music/
-Video tabs are real, working asset lists + import forms today; they are
-also where a future ``AIOrchestrator`` workflow's output will land once
-a real provider is wired up, via the exact same ``Asset`` rows and
-approval flow. See ``docs/29_EPISODE_WORKSPACE_STATUS.md``.
+No AI provider is called directly from this file. The Images tab
+(Milestone 8) is a real per-scene generation workspace — see
+``app/gui/pages/scene_image_workflow.py`` for the actual
+``AIOrchestrator``/``GenerationWorker`` wiring; this file only embeds
+``SceneImagesPanel`` and refreshes it. Voice/Music/Video remain real,
+working asset lists + import forms, landing through the exact same
+``Asset`` rows and approval flow as always — a future milestone's real
+generation for those modalities is expected to follow the same pattern
+Images just did. See ``docs/29_EPISODE_WORKSPACE_STATUS.md`` and
+``docs/32_MILESTONE_8_SCENE_IMAGE_GENERATION_STATUS.md``.
 """
 
 from __future__ import annotations
@@ -48,6 +53,7 @@ from app.core.services.exceptions import (
     ValidationError,
 )
 from app.gui.context import ApplicationContext
+from app.gui.pages.scene_image_workflow import SceneImagesPanel
 from app.gui.theme.manager import ThemeManager
 from app.gui.theme.tokens import METRICS
 from app.gui.widgets import (
@@ -62,12 +68,11 @@ from app.gui.widgets import (
 )
 
 _ASSET_TAB_TYPES = {
-    "images": AssetType.IMAGE,
     "voice": AssetType.VOICE,
     "music": AssetType.MUSIC,
     "video": AssetType.VIDEO,
 }
-_ASSET_TAB_ICON = {"images": "🖼", "voice": "🎙️", "music": "🎵", "video": "🎬"}
+_ASSET_TAB_ICON = {"voice": "🎙️", "music": "🎵", "video": "🎬"}
 _STAGE_LABEL = {
     "script": "Script", "storyboard": "Storyboard", "images": "Images", "voice": "Voice",
     "music": "Music", "video": "Video", "seo": "SEO", "export": "Export",
@@ -178,7 +183,8 @@ class EpisodeWorkspacePage(QWidget):
 
         self._build_script_tab()
         self._build_storyboard_tab()
-        for key in ("images", "voice", "music", "video"):
+        self._build_images_tab()
+        for key in ("voice", "music", "video"):
             self._build_asset_tab(key)
         self._build_seo_tab()
         self._build_export_tab()
@@ -215,6 +221,7 @@ class EpisodeWorkspacePage(QWidget):
         self.setWindowTitle(episode.title_en)
         self._refresh_script_tab(episode, script)
         self._refresh_storyboard_tab()
+        self._images_panel.refresh(self._episode_id)
         self._refresh_song_fields()
         for key, asset_type in _ASSET_TAB_TYPES.items():
             self._refresh_asset_tab(key, asset_type)
@@ -505,7 +512,15 @@ class EpisodeWorkspacePage(QWidget):
             return
         self._refresh_storyboard_tab()
 
-    # ============================================== IMAGES / VOICE / MUSIC / VIDEO
+    # =========================================================== IMAGES
+
+    def _build_images_tab(self) -> None:
+        scroll, layout = self._new_tab()
+        self._images_panel = SceneImagesPanel(self._ctx, self._theme)
+        layout.addWidget(self._images_panel)
+        self._tabs.addTab(scroll, "🖼 Images")
+
+    # ==================================================== VOICE / MUSIC / VIDEO
 
     def _build_asset_tab(self, key: str) -> None:
         tab, layout = self._new_tab()

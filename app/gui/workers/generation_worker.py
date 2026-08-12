@@ -17,6 +17,7 @@ Opens and closes its own database session inside :meth:`run` — a
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -74,6 +75,13 @@ class GenerationWorker(QThread):
     """Runs one candidate batch (or one manual retry, via ``candidate_count=1``
     and ``retry_of_job_id`` on the request) on a background thread.
 
+    ``runner`` (Milestone 8) defaults to ``run_character_reference_batch``
+    — every existing call site keeps that exact behavior unchanged.
+    Pass ``run_scene_image_batch`` (with a ``SceneImageBatchRequest``)
+    to run this same worker for scene-image candidates instead — the
+    worker itself has no character-reference-specific logic at all, it
+    only calls whatever runner it's given the same way.
+
     Signals:
         job_updated: Emitted after every persisted state change for any
             job in the batch — a lightweight "something changed,
@@ -93,16 +101,22 @@ class GenerationWorker(QThread):
     batch_failed = Signal(str)
 
     def __init__(
-        self, ctx: ApplicationContext, request: CandidateBatchRequest, parent=None
+        self,
+        ctx: ApplicationContext,
+        request: CandidateBatchRequest,
+        *,
+        runner: Callable[..., list[GenerationJob]] = run_character_reference_batch,
+        parent=None,
     ) -> None:
         super().__init__(parent)
         self._ctx = ctx
         self._request = request
+        self._runner = runner
 
     def run(self) -> None:
         session = self._ctx.open_session()
         try:
-            jobs = run_character_reference_batch(
+            jobs = self._runner(
                 session,
                 self._request,
                 orchestrator=self._ctx.ai_orchestrator,

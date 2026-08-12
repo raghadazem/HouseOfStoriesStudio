@@ -39,6 +39,16 @@ ROLE_FINAL_VIDEO = "final_video"
 ROLE_FINAL_THUMBNAIL = "final_thumbnail"
 ROLE_FINAL_VOICE = "final_voice"
 ROLE_FINAL_MUSIC = "final_music"
+# Reserved (Milestone 8): identifies the one Asset that is a Scene's
+# current approved key image (Asset.scene_id + this role, no dedicated
+# table — see docs/32_MILESTONE_8_SCENE_IMAGE_GENERATION_STATUS.md).
+# Unlike the four roles above, this one may ONLY ever be assigned via
+# SceneService.set_scene_key_image — never through a generic/manual
+# import — because that method is what guarantees at most one Asset
+# holds it per scene (unsetting the previous holder in the same
+# transaction). AssetImportService enforces this at the boundary; see
+# ImportRequest.role validation.
+ROLE_FINAL_SCENE_IMAGE = "final_scene_image"
 
 
 class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):

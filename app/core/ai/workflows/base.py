@@ -33,7 +33,14 @@ class WorkflowContext:
 
     session: Session
     provider: AIProvider
-    prompt_template_id: uuid.UUID
+    # Optional (Milestone 8): a workflow that renders its own prompt
+    # directly from already-authored text (see ``rendered_prompt_text``
+    # below) never needs a ``PromptTemplate`` row at all. Every
+    # template-based workflow (``CharacterReferenceWorkflow`` and
+    # friends) still requires a real id at its own call site — this
+    # field only becomes optional so a caller with nothing to put here
+    # doesn't have to invent one.
+    prompt_template_id: uuid.UUID | None = None
     variables: dict[str, object] = field(default_factory=dict)
     parameters: dict[str, object] = field(default_factory=dict)
     episode_id: uuid.UUID | None = None
@@ -42,6 +49,15 @@ class WorkflowContext:
     character_id: uuid.UUID | None = None
     character_version_id: uuid.UUID | None = None
     notes: str | None = None
+    # The direct-prompt path (Milestone 8): already-final text a
+    # workflow sends to the provider verbatim, bypassing PromptEngine/
+    # PromptTemplate entirely. Set together — a workflow that supports
+    # this path (SceneImageWorkflow) checks ``rendered_prompt_text is
+    # not None`` to choose it over the legacy template path; every
+    # other workflow never reads these fields at all.
+    rendered_prompt_text: str | None = None
+    rendered_negative_prompt_text: str | None = None
+    rendered_reference_asset_paths: list[str] = field(default_factory=list)
     # Set by a Workflow immediately after a successful provider.generate()
     # call, *before* AssetImportService.import_asset() runs — so the
     # orchestrator can still find (and clean up) the provider's temp

@@ -27,6 +27,7 @@ from app.core.models import (
     Scene,
     Short,
 )
+from app.core.models.asset import ROLE_FINAL_SCENE_IMAGE
 from app.core.naming import normalize_filename
 from app.core.services.exceptions import (
     AssetImportError,
@@ -110,6 +111,12 @@ class AssetImportService:
         self._validate_source_path(source)
         if not isinstance(request.asset_type, AssetType):
             raise ValidationError(f"Unsupported asset classification: {request.asset_type!r}")
+        if request.role == ROLE_FINAL_SCENE_IMAGE:
+            raise ValidationError(
+                f"role={ROLE_FINAL_SCENE_IMAGE!r} is reserved and cannot be assigned through "
+                "import_asset — it may only be assigned via SceneService.set_scene_key_image, "
+                "which guarantees at most one Asset holds it per scene."
+            )
 
         checksum = self._storage.compute_checksum(source)
         duplicate = self._storage.find_duplicate_by_checksum(session, checksum)

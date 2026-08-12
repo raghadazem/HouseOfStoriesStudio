@@ -84,7 +84,7 @@ class AIOrchestrator:
         workflow_name: str,
         *,
         provider_name: str,
-        prompt_template_id: uuid.UUID,
+        prompt_template_id: uuid.UUID | None = None,
         variables: dict[str, object] | None = None,
         parameters: dict[str, object] | None = None,
         episode_id: uuid.UUID | None = None,
@@ -93,6 +93,9 @@ class AIOrchestrator:
         character_id: uuid.UUID | None = None,
         character_version_id: uuid.UUID | None = None,
         notes: str | None = None,
+        rendered_prompt_text: str | None = None,
+        rendered_negative_prompt_text: str | None = None,
+        rendered_reference_asset_paths: list[str] | None = None,
     ) -> WorkflowResult:
         """Look up the workflow and provider, build a context, run it, log the attempt.
 
@@ -121,6 +124,9 @@ class AIOrchestrator:
             character_id=character_id,
             character_version_id=character_version_id,
             notes=notes,
+            rendered_prompt_text=rendered_prompt_text,
+            rendered_negative_prompt_text=rendered_negative_prompt_text,
+            rendered_reference_asset_paths=list(rendered_reference_asset_paths or []),
         )
 
         request_id = uuid.uuid4()
@@ -181,7 +187,12 @@ class AIOrchestrator:
             self._cleanup_temp_file(temp_output_path)
 
     @staticmethod
-    def _template_version(session: Session, prompt_template_id: uuid.UUID) -> str | None:
+    def _template_version(session: Session, prompt_template_id: uuid.UUID | None) -> str | None:
+        # None (Milestone 8's direct-prompt path — no PromptTemplate
+        # involved at all) must short-circuit before session.get(),
+        # never be passed through as a primary key lookup.
+        if prompt_template_id is None:
+            return None
         template = session.get(PromptTemplate, prompt_template_id)
         return template.version if template is not None else None
 
