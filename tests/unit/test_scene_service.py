@@ -295,6 +295,23 @@ def test_update_scene_accepts_voice_notes(session: Session) -> None:
     assert updated.voice_notes == "Warm, gentle tone; slow pacing."
 
 
+def test_add_scene_defaults_is_song_scene_to_false(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id)
+    assert scene.is_song_scene is False
+
+
+def test_update_scene_can_set_is_song_scene(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="الجميع: معاً نستطيع")
+    updated = ss.update_scene(session, scene.id, is_song_scene=True)
+    assert updated.is_song_scene is True
+    # Never touches dialogue_ar -- this flag is independent metadata.
+    assert updated.dialogue_ar == "الجميع: معاً نستطيع"
+
+
 def test_build_voice_package_splits_dialogue_by_speaker(session: Session) -> None:
     ss = SceneService()
     episode = _episode(session)

@@ -78,6 +78,49 @@ def test_populate_song_data(session: Session) -> None:
     assert song.suno_style_prompt
 
 
+def test_populate_marks_scene_9_as_song_scene_without_touching_dialogue(session: Session) -> None:
+    episode = populate_episode_001_production_content(session)
+    scene_9 = next(s for s in episode.scenes if s.order_index == 9)
+    assert scene_9.is_song_scene is True
+    assert "ميليسا وبيلسان:" in scene_9.dialogue_ar  # authored text untouched
+    assert "الجميع:" in scene_9.dialogue_ar
+    other_scenes = [s for s in episode.scenes if s.order_index != 9]
+    assert all(s.is_song_scene is False for s in other_scenes)
+
+
+def test_populate_voice_readiness_counts_match_expected_song_scene_split(session: Session) -> None:
+    """The exact Episode 001 Voice Setup checkpoint counts: 47 total
+    lines, 3 of them in the song scene, 44 ordinary-TTS-eligible, with
+    only the bird and turtle-mother speakers still unresolved."""
+    from app.core.ai.orchestrator import AIOrchestrator
+    from app.core.services.voice_generation_readiness_service import VoiceGenerationReadinessService
+
+    episode = populate_episode_001_production_content(session)
+    ss = SceneService()
+    readiness = VoiceGenerationReadinessService()
+    orchestrator = AIOrchestrator()
+
+    total_lines = 0
+    song_lines = 0
+    unresolved_spoken_speakers: set[str] = set()
+    for scene in episode.scenes:
+        for line in ss.sync_dialogue_lines(session, scene.id):
+            total_lines += 1
+            report = readiness.evaluate(
+                session, line.id, provider_name="mock_provider", orchestrator=orchestrator
+            )
+            if report.is_song_scene:
+                song_lines += 1
+                continue
+            if line.character_id is None and line.speaker_key is None:
+                unresolved_spoken_speakers.add(line.speaker_raw)
+
+    assert total_lines == 47
+    assert song_lines == 3
+    assert total_lines - song_lines == 44
+    assert unresolved_spoken_speakers == {"العصفور", "أم السلحفاة"}
+
+
 def test_populate_voice_package_covers_every_named_speaker(session: Session) -> None:
     episode = populate_episode_001_production_content(session)
     lines = SceneService().build_voice_package(session, episode.id)

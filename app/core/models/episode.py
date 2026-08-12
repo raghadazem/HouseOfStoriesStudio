@@ -216,6 +216,12 @@ class Scene(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # SceneService.calculate_total_scene_duration. Nullable: most scenes
     # won't have a duration estimate until later in production.
     estimated_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # Explicit, human-set production classification: this scene's dialogue_ar
+    # is sung (Song/Music pipeline), not ordinary spoken dialogue. Never
+    # inferred from voice_notes/dialogue text -- see
+    # VoiceGenerationReadinessService, which treats every DialogueLine in
+    # such a scene as not applicable to ordinary TTS generation.
+    is_song_scene: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     episode: Mapped[Episode] = relationship(back_populates="scenes")
     characters_present: Mapped[list[Character]] = relationship(secondary=scene_characters)

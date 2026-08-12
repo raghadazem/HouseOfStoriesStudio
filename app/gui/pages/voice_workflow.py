@@ -52,7 +52,10 @@ from app.core.models.asset import ROLE_FINAL_LINE_VOICE
 from app.core.models.voice_profile import SPEAKER_KEY_NARRATOR
 from app.core.services.exceptions import ServiceError
 from app.core.services.pronunciation_override_service import PronunciationOverrideService
-from app.core.services.voice_generation_readiness_service import VoiceGenerationReadinessService
+from app.core.services.voice_generation_readiness_service import (
+    SONG_SCENE_MESSAGE,
+    VoiceGenerationReadinessService,
+)
 from app.core.services.voice_profile_service import VoiceProfileService
 from app.gui.context import ApplicationContext
 from app.gui.theme.manager import ThemeManager
@@ -466,6 +469,7 @@ class _DialogueLineRow(QFrame):
         blocking_messages: list[str],
         has_final_take: bool,
         job_count: int,
+        is_song_scene: bool,
         on_changed: Callable[[], None],
         parent: QWidget | None = None,
     ) -> None:
@@ -488,15 +492,25 @@ class _DialogueLineRow(QFrame):
         layout.addWidget(text_label, stretch=1)
         if has_final_take:
             layout.addWidget(StatusBadge("✓ Final Take", "success"))
-        layout.addWidget(StatusBadge("Ready" if is_ready else "Blocked", "success" if is_ready else "warning"))
 
-        generate_btn = QPushButton("Generate")
-        generate_btn.setProperty("class", "primary")
-        generate_btn.setEnabled(is_ready)
-        if not is_ready:
-            generate_btn.setToolTip("; ".join(blocking_messages))
-        generate_btn.clicked.connect(self._on_generate)
-        layout.addWidget(generate_btn)
+        if is_song_scene:
+            song_badge = StatusBadge("🎵 Song", "neutral")
+            song_badge.setToolTip(SONG_SCENE_MESSAGE)
+            layout.addWidget(song_badge)
+            note = QLabel("Handled by Song/Music production")
+            note.setProperty("class", "muted")
+            layout.addWidget(note)
+        else:
+            layout.addWidget(
+                StatusBadge("Ready" if is_ready else "Blocked", "success" if is_ready else "warning")
+            )
+            generate_btn = QPushButton("Generate")
+            generate_btn.setProperty("class", "primary")
+            generate_btn.setEnabled(is_ready)
+            if not is_ready:
+                generate_btn.setToolTip("; ".join(blocking_messages))
+            generate_btn.clicked.connect(self._on_generate)
+            layout.addWidget(generate_btn)
 
     def _on_generate(self) -> None:
         dialog = _GenerateVoiceLineDialog(self._ctx, self._line.id, parent=self)
@@ -529,8 +543,11 @@ class _SceneVoiceCard(QFrame):
         self._scene = scene
         self._on_changed = on_changed
         self._ready_line_ids = [
-            line.id for line, is_ready, _msgs, _final, _count in line_rows if is_ready
+            line.id for line, is_ready, _msgs, _final, _count, _song in line_rows if is_ready
         ]
+        self._tts_eligible_count = sum(
+            1 for _line, _ready, _msgs, _final, _count, is_song in line_rows if not is_song
+        )
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(
@@ -543,7 +560,11 @@ class _SceneVoiceCard(QFrame):
         title.setProperty("class", "entityRowTitle")
         header.addWidget(title, stretch=1)
         ready_count = len(self._ready_line_ids)
-        header.addWidget(StatusBadge(f"{ready_count}/{len(line_rows)} ready", "success" if ready_count else "neutral"))
+        header.addWidget(
+            StatusBadge(
+                f"{ready_count}/{self._tts_eligible_count} ready", "success" if ready_count else "neutral"
+            )
+        )
         generate_all_btn = QPushButton("Generate All Ready")
         generate_all_btn.setEnabled(ready_count > 0)
         generate_all_btn.clicked.connect(self._on_generate_all)
@@ -552,12 +573,13 @@ class _SceneVoiceCard(QFrame):
 
         if not line_rows:
             layout.addWidget(QLabel("No dialogue in this scene yet."))
-        for line, is_ready, blocking_messages, has_final_take, job_count in line_rows:
+        for line, is_ready, blocking_messages, has_final_take, job_count, is_song_scene in line_rows:
             layout.addWidget(
                 _DialogueLineRow(
                     ctx, theme, line,
                     is_ready=is_ready, blocking_messages=blocking_messages,
                     has_final_take=has_final_take, job_count=job_count,
+                    is_song_scene=is_song_scene,
                     on_changed=on_changed,
                 )
             )
@@ -697,7 +719,13 @@ class VoiceWorkspacePanel(QWidget):
                     lines = self._ctx.scene_service.sync_dialogue_lines(session, scene.id)
                     line_rows = []
                     for line in lines:
-                        if provider_name is None:
+                        is_song_scene = scene.is_song_scene
+                        if is_song_scene:
+                            # Never subject to ordinary TTS readiness --
+                            # no provider/profile checks apply.
+                            is_ready = False
+                            blocking_messages: list[str] = []
+                        elif provider_name is None:
                             is_ready = False
                             blocking_messages = ["No voice provider is configured."]
                         else:
@@ -716,7 +744,9 @@ class VoiceWorkspacePanel(QWidget):
                         job_count = len(
                             self._ctx.generation_job_service.list_jobs(session, dialogue_line_id=line.id)
                         )
-                        line_rows.append((line, is_ready, blocking_messages, has_final_take, job_count))
+                        line_rows.append(
+                            (line, is_ready, blocking_messages, has_final_take, job_count, is_song_scene)
+                        )
                     card_data.append((scene, line_rows))
         except OperationalError:
             return

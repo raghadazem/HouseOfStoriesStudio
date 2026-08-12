@@ -37,6 +37,7 @@ _UPDATABLE_FIELDS = {
     "negative_prompt_text",
     "estimated_duration_seconds",
     "voice_notes",
+    "is_song_scene",
 }
 
 

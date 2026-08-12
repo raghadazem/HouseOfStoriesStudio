@@ -154,6 +154,29 @@ def test_run_batch_rejects_unconfigured_provider_before_creating_any_job(
     assert jobs.list_jobs(session, dialogue_line_id=line.id) == []
 
 
+def test_run_batch_rejects_song_scene_line_before_creating_any_job(
+    session: Session, app_config: AppConfig
+) -> None:
+    """Core must refuse a song-scene line even if called directly --
+    never relies solely on the GUI hiding/disabling Generate."""
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="الجميع: معاً نستطيع")
+    ss.update_scene(session, scene.id, is_song_scene=True)
+    line = ss.sync_dialogue_lines(session, scene.id)[0]
+    jobs = GenerationJobService()
+
+    with pytest.raises(ValidationError, match="song scene"):
+        run_voice_line_batch(
+            session,
+            VoiceLineBatchRequest(provider_name="mock_provider", dialogue_line_id=line.id, episode_id=episode.id),
+            orchestrator=_orchestrator(app_config),
+            generation_jobs=jobs,
+        )
+
+    assert jobs.list_jobs(session, dialogue_line_id=line.id) == []
+
+
 # --- success + provenance ---------------------------------------------------
 
 

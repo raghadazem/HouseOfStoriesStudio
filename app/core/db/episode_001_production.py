@@ -794,6 +794,33 @@ def _get_or_create_tortor(session: Session) -> Character:
     return character
 
 
+# Scene 9 ("أغنية معاً نستطيع") is the episode's one wholly musical
+# scene -- see SONG_LYRICS_AR/SONG_PRODUCTION_NOTES above and Scene 9's
+# own voice_notes ("Sung, not spoken -- see the Song package"). Flagging
+# it here is real production data specific to this episode, exactly like
+# every other constant in this module -- the readiness logic itself
+# (VoiceGenerationReadinessService) only ever consults Scene.is_song_scene,
+# never an order_index or episode check.
+_SONG_SCENE_ORDER_INDEX = 9
+
+
+def _mark_song_scenes(session: Session, episode: Episode) -> None:
+    """Flag Episode 001's musical scene as song production content.
+
+    Idempotent and additive only -- never touches dialogue_ar or any
+    other scene field. A human can still change this later through the
+    same Storyboard edit path (SceneService.update_scene) if the
+    production plan changes.
+    """
+    scene = next(
+        (s for s in episode.scenes if s.order_index == _SONG_SCENE_ORDER_INDEX), None
+    )
+    if scene is None or scene.is_song_scene:
+        return
+    scene.is_song_scene = True
+    session.flush()
+
+
 def _populate_script(session: Session, episode: Episode) -> None:
     script_service = ScriptService()
     script = script_service.get_or_create_script(session, episode.id)
@@ -922,6 +949,7 @@ def populate_episode_001_production_content(session: Session) -> Episode:
 
     _populate_script(session, episode)
     _populate_scenes(session, episode, melissa, bilsan, tortor)
+    _mark_song_scenes(session, episode)
     _populate_song(session, episode)
     _populate_shorts(session, episode)
     _populate_seo(session, episode)

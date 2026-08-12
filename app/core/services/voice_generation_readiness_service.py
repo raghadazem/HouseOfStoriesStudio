@@ -47,17 +47,37 @@ class LineReadinessCheck:
     message: str
 
 
+SONG_SCENE_MESSAGE = (
+    "This dialogue line belongs to a song scene and is not eligible for ordinary "
+    "TTS generation. It is produced through the Song/Music pipeline instead."
+)
+
+
 @dataclass
 class LineReadinessReport:
     dialogue_line_id: uuid.UUID
     checks: list[LineReadinessCheck] = field(default_factory=list)
+    # Set only for lines whose parent Scene.is_song_scene is True. Such a
+    # line is neither READY nor BLOCKED -- it was never subject to the
+    # ordinary speaker/profile/provider checks below, so it can never
+    # produce a "blocked" reason (e.g. an unresolved speaker inside a song
+    # scene must not read as a Voice failure).
+    not_applicable_reason: str | None = None
+
+    @property
+    def is_song_scene(self) -> bool:
+        return self.not_applicable_reason is not None
 
     @property
     def is_ready(self) -> bool:
+        if self.is_song_scene:
+            return False
         return all(check.passed for check in self.checks)
 
     @property
     def blocking_messages(self) -> list[str]:
+        if self.is_song_scene:
+            return []
         return [check.message for check in self.checks if not check.passed]
 
 
@@ -87,6 +107,11 @@ class VoiceGenerationReadinessService:
         line = session.get(DialogueLine, dialogue_line_id)
         if line is None:
             raise NotFoundError(f"DialogueLine {dialogue_line_id} not found.")
+
+        if line.scene.is_song_scene:
+            return LineReadinessReport(
+                dialogue_line_id=dialogue_line_id, not_applicable_reason=SONG_SCENE_MESSAGE
+            )
 
         report = LineReadinessReport(dialogue_line_id=dialogue_line_id)
 

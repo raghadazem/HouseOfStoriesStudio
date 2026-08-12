@@ -185,6 +185,44 @@ def test_evaluate_blocks_when_a_job_is_already_in_flight(session: Session) -> No
     assert any("already pending/running" in msg for msg in report.blocking_messages)
 
 
+def test_evaluate_song_scene_line_is_not_applicable(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="ميليسا وبيلسان: معاً معاً")
+    ss.update_scene(session, scene.id, is_song_scene=True)
+    line = ss.sync_dialogue_lines(session, scene.id)[0]
+    service = VoiceGenerationReadinessService(scenes=ss)
+
+    report = service.evaluate(
+        session, line.id, provider_name="mock_provider", orchestrator=_orchestrator()
+    )
+
+    assert report.is_song_scene
+    assert not report.is_ready
+    assert report.blocking_messages == []
+    assert report.not_applicable_reason is not None
+
+
+def test_evaluate_song_scene_unresolved_speaker_is_not_a_voice_blocker(session: Session) -> None:
+    """A song scene's lines skip the ordinary speaker/profile checks
+    entirely -- an unresolved speaker like 'الجميع' must never surface
+    as a Voice readiness failure."""
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="الجميع: معاً نستطيع")
+    ss.update_scene(session, scene.id, is_song_scene=True)
+    line = ss.sync_dialogue_lines(session, scene.id)[0]
+    service = VoiceGenerationReadinessService(scenes=ss)
+
+    report = service.evaluate(
+        session, line.id, provider_name="mock_provider", orchestrator=_orchestrator()
+    )
+
+    assert report.is_song_scene
+    assert not any("does not match any known character" in msg for msg in report.blocking_messages)
+    assert report.blocking_messages == []
+
+
 def test_evaluate_scene_returns_one_report_per_current_line(session: Session) -> None:
     ss = SceneService()
     vps = VoiceProfileService()

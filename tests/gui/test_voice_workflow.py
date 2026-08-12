@@ -121,6 +121,31 @@ def test_panel_shows_ready_line_with_generate_enabled(
     assert buttons["Generate"].isEnabled() is True
 
 
+def test_panel_shows_song_scene_line_with_song_badge_and_no_generate_button(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    """A song-scene line must never read as Blocked/Ready, must show a
+    Song badge instead, must not offer an ordinary Generate button, and
+    must not count toward the scene's ready total -- even though its
+    speaker ('الجميع') would otherwise be unresolved."""
+    episode_id = _episode(gui_context)
+    scene_id = _scene(gui_context, episode_id, "الجميع: معاً نستطيع")
+    with gui_context.session_scope() as session:
+        gui_context.scene_service.update_scene(session, scene_id, is_song_scene=True)
+
+    panel = vw.VoiceWorkspacePanel(gui_context, theme)
+    qtbot.addWidget(panel)
+    panel.refresh(episode_id)
+
+    labels = [label.text() for label in panel.findChildren(QLabel)]
+    assert any("Song" in text for text in labels)
+    assert not any("Blocked" in text for text in labels)
+    assert not any(text.strip() == "Ready" for text in labels)
+    assert any("0/0 ready" in text for text in labels)
+    buttons = {btn.text(): btn for btn in panel.findChildren(QPushButton)}
+    assert "Generate" not in buttons
+
+
 # --- generate dialog ---------------------------------------------------------
 
 

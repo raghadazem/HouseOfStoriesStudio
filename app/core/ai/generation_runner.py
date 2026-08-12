@@ -45,7 +45,10 @@ from app.core.services.exceptions import (
 from app.core.services.pronunciation_override_service import PronunciationOverrideService
 from app.core.services.reference_selection_service import ReferenceSelectionService
 from app.core.services.scene_generation_readiness_service import SceneGenerationReadinessService
-from app.core.services.voice_generation_readiness_service import VoiceGenerationReadinessService
+from app.core.services.voice_generation_readiness_service import (
+    SONG_SCENE_MESSAGE,
+    VoiceGenerationReadinessService,
+)
 from app.core.services.voice_profile_service import VoiceProfileService
 
 MIN_CANDIDATE_COUNT = 1
@@ -568,7 +571,11 @@ def run_voice_line_batch(
     Fail-fast checks, in order, before any GenerationJob row is created:
 
     1. candidate_count is in range.
-    2. VoiceGenerationReadinessService reports the line ready (speaker
+    2. The line's Scene is not a song scene (Scene.is_song_scene) --
+       enforced here even though the GUI already hides/disables the
+       Generate action for these lines, so a direct call can never
+       create a GenerationJob for sung content.
+    3. VoiceGenerationReadinessService reports the line ready (speaker
        resolved, an approved active voice profile exists, the provider
        is configured, no already-in-flight job for this exact line) --
        raises ValidationError naming every blocking reason if not.
@@ -595,6 +602,10 @@ def run_voice_line_batch(
     line = session.get(DialogueLine, request.dialogue_line_id)
     if line is None:
         raise NotFoundError(f"DialogueLine {request.dialogue_line_id} not found.")
+    if line.scene.is_song_scene:
+        # Enforced here too, not just by the GUI hiding/disabling the
+        # Generate action -- core must refuse even a direct call.
+        raise ValidationError(SONG_SCENE_MESSAGE)
 
     readiness_service = readiness or VoiceGenerationReadinessService()
     report = readiness_service.evaluate(
