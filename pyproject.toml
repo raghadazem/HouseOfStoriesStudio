@@ -19,6 +19,7 @@ dependencies = [
     "python-bidi>=0.4",
     "arabic-reshaper>=3.0",
     "google-genai>=1.0",
+    "elevenlabs>=1.0",
 ]
 
 [project.scripts]

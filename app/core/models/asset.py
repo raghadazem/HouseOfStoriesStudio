@@ -13,7 +13,7 @@ import re
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Enum, Float, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship, validates
 
 from app.core.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -22,6 +22,7 @@ from app.core.models._path_validation import validate_relative_path
 
 if TYPE_CHECKING:
     from app.core.models.character import CharacterVersion
+    from app.core.models.dialogue_line import DialogueLine
     from app.core.models.episode import Episode, Scene, Short
     from app.core.models.generation_job import GenerationJob
     from app.core.models.prompt import PromptTemplate
@@ -49,6 +50,15 @@ ROLE_FINAL_MUSIC = "final_music"
 # transaction). AssetImportService enforces this at the boundary; see
 # ImportRequest.role validation.
 ROLE_FINAL_SCENE_IMAGE = "final_scene_image"
+# Reserved (Milestone 9): identifies the current approved take for one
+# DialogueLine (Asset.dialogue_line_id + this role). Kept in the
+# "final_" family deliberately so an approved voice line automatically
+# participates in SceneService.delete_scene's existing
+# role.like('final_%') guard, with no new guard logic needed. Like
+# ROLE_FINAL_SCENE_IMAGE, only SceneService.set_line_final_take may
+# assign it — never a generic/manual import. See
+# docs/33_MILESTONE_9_REAL_VOICE_PRODUCTION_STATUS.md.
+ROLE_FINAL_LINE_VOICE = "final_line_voice"
 
 
 class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -105,6 +115,18 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     generation_job_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("generation_jobs.id", ondelete="SET NULL"), nullable=True
     )
+    # Milestone 9: which stable DialogueLine (if any) this asset is a
+    # voice-line candidate/take for. NULL for every non-voice asset and
+    # for every asset that predates this milestone.
+    dialogue_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("dialogue_lines.id", ondelete="SET NULL"), nullable=True
+    )
+    # Milestone 9: measured from the real audio file's bytes after
+    # generation/import — never invented, never provider-reported
+    # verbatim (see GeminiProvider's cost_usd precedent: only ever an
+    # authoritative figure, or NULL). NULL for non-audio assets and for
+    # every asset imported before this milestone.
+    duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     approval_status: Mapped[ApprovalStatus] = mapped_column(
         Enum(ApprovalStatus, native_enum=False, length=32),
@@ -123,6 +145,7 @@ class Asset(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     generation_job: Mapped[GenerationJob | None] = relationship(
         foreign_keys=[generation_job_id]
     )
+    dialogue_line: Mapped[DialogueLine | None] = relationship()
 
     @validates("relative_path")
     def validate_relative_path(self, key: str, value: str) -> str:

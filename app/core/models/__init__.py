@@ -11,6 +11,7 @@ from app.core.db.base import Base
 from app.core.models.approval import ApprovalRecord
 from app.core.models.asset import Asset
 from app.core.models.character import Character, CharacterReference, CharacterVersion
+from app.core.models.dialogue_line import DialogueLine
 from app.core.models.episode import (
     Episode,
     Scene,
@@ -25,6 +26,8 @@ from app.core.models.generation_job import GenerationJob
 from app.core.models.license import LicenseRecord
 from app.core.models.production_task import ProductionTask
 from app.core.models.prompt import PromptTemplate
+from app.core.models.pronunciation_override import PronunciationOverride
+from app.core.models.voice_profile import VoiceProfile
 
 __all__ = [
     "ApprovalRecord",
@@ -33,15 +36,18 @@ __all__ = [
     "Character",
     "CharacterReference",
     "CharacterVersion",
+    "DialogueLine",
     "Episode",
     "GenerationJob",
     "LicenseRecord",
     "ProductionTask",
     "PromptTemplate",
+    "PronunciationOverride",
     "Scene",
     "Script",
     "Short",
     "Song",
+    "VoiceProfile",
     "episode_characters",
     "scene_characters",
     "short_scenes",

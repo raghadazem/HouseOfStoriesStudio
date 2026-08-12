@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QVBoxLayout,
@@ -20,12 +21,19 @@ from PySide6.QtWidgets import (
 )
 
 from app import __version__
+from app.core.ai.providers.elevenlabs_provider import (
+    DEFAULT_MODEL as ELEVENLABS_DEFAULT_MODEL,
+)
+from app.core.ai.providers.elevenlabs_provider import ENV_API_KEY as ELEVENLABS_ENV_API_KEY
+from app.core.ai.providers.elevenlabs_provider import ENV_MODEL as ELEVENLABS_ENV_MODEL
 from app.core.ai.providers.gemini_provider import DEFAULT_MODEL, ENV_API_KEY, ENV_MODEL
+from app.core.services.exceptions import ServiceError
+from app.core.services.pronunciation_override_service import PronunciationOverrideService
 from app.gui.context import ApplicationContext
 from app.gui.settings import AppSettings
 from app.gui.theme.manager import ThemeManager
 from app.gui.theme.tokens import METRICS
-from app.gui.widgets import PageHeader, SectionHeader, StatusBadge
+from app.gui.widgets import PageHeader, SectionHeader, StatusBadge, show_error
 from app.gui.windows.top_bar import APP_SUBTITLE_AR, APP_TITLE
 
 _MODALITIES: tuple[tuple[str, str], ...] = (
@@ -87,6 +95,8 @@ class SettingsPage(QWidget):
         layout.addWidget(self._build_workspace_section())
         layout.addWidget(self._build_providers_section())
         layout.addWidget(self._build_gemini_section())
+        layout.addWidget(self._build_elevenlabs_section())
+        layout.addWidget(self._build_pronunciation_overrides_section())
         layout.addWidget(self._build_about_section())
         layout.addStretch(1)
 
@@ -202,6 +212,123 @@ class SettingsPage(QWidget):
         guidance.setWordWrap(True)
         layout.addWidget(guidance)
         return card
+
+    # --- ElevenLabs Voice --------------------------------------------------------
+
+    def _build_elevenlabs_section(self) -> QFrame:
+        """Model/configuration status only — never the secret itself.
+
+        Exact mirror of :meth:`_build_gemini_section`'s pattern: the API
+        key lives in the ``ELEVENLABS_API_KEY`` environment variable
+        (never the database, source, tests, or QSettings), same policy
+        as every real provider in this app. No editable secret field,
+        no way to display the key's value.
+        """
+        card, layout = _section_card("ElevenLabs Voice", "Real AI voice-line generation")
+        provider = self._ctx.ai_orchestrator.get_provider("elevenlabs")
+        configured = provider.is_configured()
+        # Distinct keys from the Gemini section's "Status"/"Model" --
+        # self._info_values is keyed by label across the whole page, so
+        # two sections sharing a bare "Status"/"Model" key would silently
+        # overwrite each other's test hook entry (_info_text lookup).
+        layout.addWidget(
+            self._info_row(
+                "Voice Status",
+                "Configured" if configured else "Not configured",
+                badge_variant="success" if configured else "neutral",
+            )
+        )
+        layout.addWidget(self._info_row("Voice Model", provider.model))
+        guidance = QLabel(
+            f"Set the {ELEVENLABS_ENV_API_KEY} environment variable to configure. Optionally set "
+            f"{ELEVENLABS_ENV_MODEL} to override the model (defaults to {ELEVENLABS_DEFAULT_MODEL})."
+        )
+        guidance.setProperty("class", "muted")
+        guidance.setWordWrap(True)
+        layout.addWidget(guidance)
+        return card
+
+    # --- Pronunciation Overrides ---------------------------------------------
+
+    def _build_pronunciation_overrides_section(self) -> QFrame:
+        """A small, global term -> replacement table any future character's
+        name can be added to without a source-code release — see
+        ``docs/33_MILESTONE_9_REAL_VOICE_PRODUCTION_STATUS.md``."""
+        card, layout = _section_card(
+            "Pronunciation Overrides", "Applied to every voice line, regardless of speaker"
+        )
+        self._pronunciation_list_layout = QVBoxLayout()
+        layout.addLayout(self._pronunciation_list_layout)
+
+        add_row = QHBoxLayout()
+        self._pronunciation_term_field = QLineEdit()
+        self._pronunciation_term_field.setPlaceholderText("Term, e.g. تورتور")
+        add_row.addWidget(self._pronunciation_term_field)
+        self._pronunciation_replacement_field = QLineEdit()
+        self._pronunciation_replacement_field.setPlaceholderText("Replacement, e.g. طُرطُر")
+        add_row.addWidget(self._pronunciation_replacement_field)
+        add_button = QPushButton("+ Add")
+        add_button.setProperty("class", "primary")
+        add_button.clicked.connect(self._on_add_pronunciation_override)
+        add_row.addWidget(add_button)
+        add_wrap = QWidget()
+        add_wrap.setLayout(add_row)
+        layout.addWidget(add_wrap)
+
+        self._refresh_pronunciation_overrides()
+        return card
+
+    def _refresh_pronunciation_overrides(self) -> None:
+        while self._pronunciation_list_layout.count():
+            item = self._pronunciation_list_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+
+        with self._ctx.open_session() as session:
+            overrides = PronunciationOverrideService().list_overrides(session)
+            rows = [(o.id, o.term, o.replacement) for o in overrides]
+
+        if not rows:
+            self._pronunciation_list_layout.addWidget(QLabel("No overrides configured yet."))
+        for override_id, term, replacement in rows:
+            row = QHBoxLayout()
+            row.addWidget(QLabel(f"{term} → {replacement}"), stretch=1)
+            remove_button = QPushButton("Remove")
+            remove_button.setProperty("class", "danger")
+            remove_button.clicked.connect(
+                lambda _checked=False, oid=override_id: self._on_remove_pronunciation_override(oid)
+            )
+            row.addWidget(remove_button)
+            wrap = QWidget()
+            wrap.setLayout(row)
+            self._pronunciation_list_layout.addWidget(wrap)
+
+    def _on_add_pronunciation_override(self) -> None:
+        term = self._pronunciation_term_field.text().strip()
+        replacement = self._pronunciation_replacement_field.text().strip()
+        if not term or not replacement:
+            show_error(self, "Add Pronunciation Override", "Both term and replacement are required.")
+            return
+        try:
+            with self._ctx.session_scope() as session:
+                PronunciationOverrideService().create_override(session, term=term, replacement=replacement)
+        except ServiceError as err:
+            show_error(self, "Add Pronunciation Override", str(err))
+            return
+        self._pronunciation_term_field.clear()
+        self._pronunciation_replacement_field.clear()
+        self._refresh_pronunciation_overrides()
+
+    def _on_remove_pronunciation_override(self, override_id) -> None:
+        try:
+            with self._ctx.session_scope() as session:
+                PronunciationOverrideService().remove_override(session, override_id)
+        except ServiceError as err:
+            show_error(self, "Remove Pronunciation Override", str(err))
+            return
+        self._refresh_pronunciation_overrides()
 
     # --- About ------------------------------------------------------------------
 

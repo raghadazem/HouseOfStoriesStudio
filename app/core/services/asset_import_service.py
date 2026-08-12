@@ -22,12 +22,13 @@ from app.core.models import (
     Asset,
     Character,
     CharacterVersion,
+    DialogueLine,
     Episode,
     PromptTemplate,
     Scene,
     Short,
 )
-from app.core.models.asset import ROLE_FINAL_SCENE_IMAGE
+from app.core.models.asset import ROLE_FINAL_LINE_VOICE, ROLE_FINAL_SCENE_IMAGE
 from app.core.naming import normalize_filename
 from app.core.services.exceptions import (
     AssetImportError,
@@ -64,6 +65,11 @@ class ImportRequest:
     short_id: uuid.UUID | None = None
     character_id: uuid.UUID | None = None
     character_version_id: uuid.UUID | None = None
+    # Milestone 9: which stable DialogueLine (if any) this is a
+    # voice-line candidate for, and its measured duration -- see
+    # docs/33_MILESTONE_9_REAL_VOICE_PRODUCTION_STATUS.md.
+    dialogue_line_id: uuid.UUID | None = None
+    duration_seconds: float | None = None
     role: str | None = None
     source_tool: str | None = None
     prompt_used_id: uuid.UUID | None = None
@@ -117,6 +123,12 @@ class AssetImportService:
                 "import_asset — it may only be assigned via SceneService.set_scene_key_image, "
                 "which guarantees at most one Asset holds it per scene."
             )
+        if request.role == ROLE_FINAL_LINE_VOICE:
+            raise ValidationError(
+                f"role={ROLE_FINAL_LINE_VOICE!r} is reserved and cannot be assigned through "
+                "import_asset — it may only be assigned via SceneService.set_line_final_take, "
+                "which guarantees at most one Asset holds it per DialogueLine."
+            )
 
         checksum = self._storage.compute_checksum(source)
         duplicate = self._storage.find_duplicate_by_checksum(session, checksum)
@@ -158,6 +170,8 @@ class AssetImportService:
                 episode_id=request.episode_id,
                 scene_id=request.scene_id,
                 short_id=request.short_id,
+                dialogue_line_id=request.dialogue_line_id,
+                duration_seconds=request.duration_seconds,
                 approval_status=ApprovalStatus.DRAFT,
                 notes=request.notes,
             )
@@ -217,6 +231,13 @@ class AssetImportService:
                 raise NotFoundError(f"Short {request.short_id} not found.")
             if request.episode_id is not None and short.episode_id != request.episode_id:
                 raise ValidationError("short_id does not belong to the given episode_id.")
+
+        if request.dialogue_line_id is not None:
+            line = session.get(DialogueLine, request.dialogue_line_id)
+            if line is None:
+                raise NotFoundError(f"DialogueLine {request.dialogue_line_id} not found.")
+            if request.scene_id is not None and line.scene_id != request.scene_id:
+                raise ValidationError("dialogue_line_id does not belong to the given scene_id.")
 
         if (
             request.prompt_used_id is not None

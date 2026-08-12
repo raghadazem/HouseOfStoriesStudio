@@ -34,6 +34,7 @@ from app.core.models import (
     Scene,
     Script,
     Short,
+    VoiceProfile,
 )
 from app.core.models.approval import ApprovalRecord
 from app.core.services.exceptions import NotFoundError, ValidationError
@@ -47,11 +48,15 @@ ENTITY_TYPE_MODELS: dict[str, type] = {
     "script": Script,
     "short": Short,
     "prompt_template": PromptTemplate,
+    # Milestone 9: VoiceProfile has no approval_status column of its
+    # own -- it reuses this same generic mechanism, exactly like every
+    # other approvable entity here.
+    "voice_profile": VoiceProfile,
 }
 
 
 class ApprovalService:
-    """Records and reads approval decisions for any of the 7 supported entity types."""
+    """Records and reads approval decisions for any of the 8 supported entity types."""
 
     def submit_for_review(
         self, session: Session, entity_type: str, entity_id: uuid.UUID

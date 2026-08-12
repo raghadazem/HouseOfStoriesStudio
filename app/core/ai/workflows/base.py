@@ -48,6 +48,9 @@ class WorkflowContext:
     short_id: uuid.UUID | None = None
     character_id: uuid.UUID | None = None
     character_version_id: uuid.UUID | None = None
+    # Milestone 9: which stable DialogueLine (if any) this generation
+    # is for -- VoiceLineWorkflow sets this on the imported Asset.
+    dialogue_line_id: uuid.UUID | None = None
     notes: str | None = None
     # The direct-prompt path (Milestone 8): already-final text a
     # workflow sends to the provider verbatim, bypassing PromptEngine/

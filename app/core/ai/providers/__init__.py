@@ -12,12 +12,14 @@ GUI) changes — confirmed true again in Milestone 7, which adds
 from __future__ import annotations
 
 from app.core.ai.provider_interface import AIProvider
+from app.core.ai.providers.elevenlabs_provider import ElevenLabsProvider
 from app.core.ai.providers.gemini_provider import GeminiProvider
 from app.core.ai.providers.mock_provider import MockProvider
 
 PROVIDER_REGISTRY: dict[str, type[AIProvider]] = {
     MockProvider.name: MockProvider,
     GeminiProvider.name: GeminiProvider,
+    ElevenLabsProvider.name: ElevenLabsProvider,
 }
 
-__all__ = ["PROVIDER_REGISTRY", "GeminiProvider", "MockProvider"]
+__all__ = ["PROVIDER_REGISTRY", "ElevenLabsProvider", "GeminiProvider", "MockProvider"]

@@ -328,6 +328,99 @@ def test_voice_line_workflow_requires_episode(session: Session, app_config: AppC
         workflow.run(ctx)
 
 
+def test_voice_line_workflow_direct_text_path_bypasses_prompt_engine(
+    session: Session, app_config: AppConfig
+) -> None:
+    """rendered_prompt_text set, no prompt_template_id -- proves the
+    direct path never touches PromptEngine/PromptTemplate."""
+    episode = _episode(session)
+    workflow = VoiceLineWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        prompt_template_id=None,
+        episode_id=episode.id,
+        rendered_prompt_text="مرحباً يا أصدقاء",
+    )
+
+    result = workflow.run(ctx)
+
+    assert result.generation_request.prompt_text == "مرحباً يا أصدقاء"
+    assert result.generation_request.modality == "voice"
+    assert result.asset.prompt_used_id is None  # no PromptTemplate was ever involved
+    assert result.asset.asset_type == AssetType.VOICE
+
+
+def test_voice_line_workflow_direct_text_path_measures_real_duration(
+    session: Session, app_config: AppConfig
+) -> None:
+    episode = _episode(session)
+    workflow = VoiceLineWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        episode_id=episode.id,
+        rendered_prompt_text="نص قصير",
+    )
+
+    result = workflow.run(ctx)
+
+    # MockProvider's voice output is a real, wave-openable 1.0s clip
+    # (see mock_provider.py) -- proves duration is genuinely measured
+    # from the file, not invented.
+    assert result.asset.duration_seconds == 1.0
+
+
+def test_voice_line_workflow_direct_text_path_sets_dialogue_line_id(
+    session: Session, app_config: AppConfig
+) -> None:
+    from app.core.services.scene_service import SceneService
+
+    episode = _episode(session)
+    scene = SceneService().add_scene(session, episode.id, dialogue_ar="ميليسا: مرحباً")
+    line = SceneService().sync_dialogue_lines(session, scene.id)[0]
+    workflow = VoiceLineWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        episode_id=episode.id,
+        dialogue_line_id=line.id,
+        rendered_prompt_text="مرحباً",
+    )
+
+    result = workflow.run(ctx)
+
+    assert result.asset.dialogue_line_id == line.id
+
+
+def test_voice_line_workflow_legacy_template_path_still_works(
+    session: Session, app_config: AppConfig
+) -> None:
+    """rendered_prompt_text left unset (default None) -- the
+    pre-Milestone-9 template path must still work unchanged."""
+    episode = _episode(session)
+    template = _template(
+        session,
+        name="voice_line_legacy",
+        category=PromptCategory.VOICE,
+        prompt_type=PromptType.VOICE,
+        text_en="Say: hello there.",
+    )
+    workflow = VoiceLineWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        prompt_template_id=template.id,
+        episode_id=episode.id,
+    )
+
+    result = workflow.run(ctx)
+
+    assert result.generation_request.prompt_text == "Say: hello there."
+    assert result.asset.prompt_used_id == template.id
+    assert result.asset.duration_seconds is None  # legacy path never measures duration
+
+
 # --- ThumbnailWorkflow ---------------------------------------------------
 
 

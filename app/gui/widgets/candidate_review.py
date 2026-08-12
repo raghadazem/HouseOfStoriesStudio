@@ -24,8 +24,9 @@ from collections.abc import Callable
 from dataclasses import replace
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QPixmap
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -79,6 +80,76 @@ def load_thumbnail(ctx: ApplicationContext, asset: Asset) -> QPixmap | None:
     return pixmap if not pixmap.isNull() else None
 
 
+def _append_common_tile_footer(
+    layout: QVBoxLayout,
+    job: GenerationJob,
+    asset: Asset | None,
+    *,
+    on_approve: Callable[[uuid.UUID], None],
+    on_reject: Callable[[uuid.UUID], None],
+    on_retry: Callable[[uuid.UUID], None],
+    on_cancel: Callable[[uuid.UUID], None],
+    tertiary_badge: str | None,
+    tertiary_action: TertiaryAction | None,
+) -> None:
+    """The part identical between every candidate tile regardless of
+    modality: status/tertiary badges, provider/model, generation
+    duration, error message, and the approve/reject/retry/cancel/
+    tertiary actions. Only the "preview" above this (a thumbnail for
+    images, a play button for audio) is genuinely modality-specific."""
+    badge_row = QHBoxLayout()
+    badge_row.addWidget(
+        StatusBadge(job.status.value.replace("_", " ").title(), _JOB_STATUS_VARIANT[job.status])
+    )
+    if tertiary_badge:
+        badge_row.addWidget(StatusBadge(tertiary_badge, "success"))
+    badge_row.addStretch(1)
+    layout.addLayout(badge_row)
+
+    meta = QLabel(f"{job.provider_name}" + (f" · {job.provider_model}" if job.provider_model else ""))
+    meta.setProperty("class", "entityCardSubtitle")
+    meta.setWordWrap(True)
+    layout.addWidget(meta)
+
+    duration = format_duration(job.started_at, job.completed_at)
+    time_label = QLabel(duration)
+    time_label.setProperty("class", "muted")
+    layout.addWidget(time_label)
+
+    if job.error_message:
+        error_label = QLabel(job.error_message)
+        error_label.setProperty("class", "formError")
+        error_label.setWordWrap(True)
+        layout.addWidget(error_label)
+
+    actions = QHBoxLayout()
+    if job.status in (GenerationJobStatus.PENDING, GenerationJobStatus.RUNNING):
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.clicked.connect(lambda: on_cancel(job.id))
+        actions.addWidget(cancel_btn)
+    elif job.status == GenerationJobStatus.SUCCEEDED and asset is not None:
+        if asset.approval_status == ApprovalStatus.DRAFT:
+            reject_btn = QPushButton("Reject")
+            reject_btn.setProperty("class", "danger")
+            reject_btn.clicked.connect(lambda: on_reject(asset.id))
+            actions.addWidget(reject_btn)
+            approve_btn = QPushButton("Approve")
+            approve_btn.setProperty("class", "primary")
+            approve_btn.clicked.connect(lambda: on_approve(asset.id))
+            actions.addWidget(approve_btn)
+        elif asset.approval_status == ApprovalStatus.APPROVED and tertiary_action is not None:
+            label, handler = tertiary_action
+            action_btn = QPushButton(label)
+            action_btn.setProperty("class", "primary")
+            action_btn.clicked.connect(lambda: handler(asset.id))
+            actions.addWidget(action_btn)
+    elif job.status in (GenerationJobStatus.FAILED, GenerationJobStatus.CANCELLED):
+        retry_btn = QPushButton("Retry")
+        retry_btn.clicked.connect(lambda: on_retry(job.id))
+        actions.addWidget(retry_btn)
+    layout.addLayout(actions)
+
+
 class CandidateTile(QFrame):
     def __init__(
         self,
@@ -120,57 +191,75 @@ class CandidateTile(QFrame):
                 )
         layout.addWidget(thumb, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-        badge_row = QHBoxLayout()
-        badge_row.addWidget(
-            StatusBadge(job.status.value.replace("_", " ").title(), _JOB_STATUS_VARIANT[job.status])
+        _append_common_tile_footer(
+            layout, job, asset,
+            on_approve=on_approve, on_reject=on_reject, on_retry=on_retry, on_cancel=on_cancel,
+            tertiary_badge=tertiary_badge, tertiary_action=tertiary_action,
         )
-        if tertiary_badge:
-            badge_row.addWidget(StatusBadge(tertiary_badge, "success"))
-        badge_row.addStretch(1)
-        layout.addLayout(badge_row)
 
-        meta = QLabel(f"{job.provider_name}" + (f" · {job.provider_model}" if job.provider_model else ""))
-        meta.setProperty("class", "entityCardSubtitle")
-        meta.setWordWrap(True)
-        layout.addWidget(meta)
 
-        duration = format_duration(job.started_at, job.completed_at)
-        time_label = QLabel(duration)
-        time_label.setProperty("class", "muted")
-        layout.addWidget(time_label)
+class AudioCandidateTile(QFrame):
+    """Milestone 9: a voice-line candidate's audio is fundamentally not
+    a static preview -- it needs a play control and a real duration,
+    not a thumbnail. Shares everything else (badges, provider/model,
+    approve/reject/retry/cancel/tertiary action) with ``CandidateTile``
+    via :func:`_append_common_tile_footer`, per the founder's "do not
+    force image-specific widgets into audio use" instruction."""
 
-        if job.error_message:
-            error_label = QLabel(job.error_message)
-            error_label.setProperty("class", "formError")
-            error_label.setWordWrap(True)
-            layout.addWidget(error_label)
+    def __init__(
+        self,
+        ctx: ApplicationContext,
+        job: GenerationJob,
+        asset: Asset | None,
+        *,
+        on_approve: Callable[[uuid.UUID], None],
+        on_reject: Callable[[uuid.UUID], None],
+        on_retry: Callable[[uuid.UUID], None],
+        on_cancel: Callable[[uuid.UUID], None],
+        tertiary_badge: str | None = None,
+        tertiary_action: TertiaryAction | None = None,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setProperty("class", "card")
+        self.setMinimumWidth(200)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(
+            METRICS.spacing_sm, METRICS.spacing_sm, METRICS.spacing_sm, METRICS.spacing_sm
+        )
+        layout.setSpacing(METRICS.spacing_xs)
 
-        actions = QHBoxLayout()
-        if job.status in (GenerationJobStatus.PENDING, GenerationJobStatus.RUNNING):
-            cancel_btn = QPushButton("Cancel")
-            cancel_btn.clicked.connect(lambda: on_cancel(job.id))
-            actions.addWidget(cancel_btn)
-        elif job.status == GenerationJobStatus.SUCCEEDED and asset is not None:
-            if asset.approval_status == ApprovalStatus.DRAFT:
-                reject_btn = QPushButton("Reject")
-                reject_btn.setProperty("class", "danger")
-                reject_btn.clicked.connect(lambda: on_reject(asset.id))
-                actions.addWidget(reject_btn)
-                approve_btn = QPushButton("Approve")
-                approve_btn.setProperty("class", "primary")
-                approve_btn.clicked.connect(lambda: on_approve(asset.id))
-                actions.addWidget(approve_btn)
-            elif asset.approval_status == ApprovalStatus.APPROVED and tertiary_action is not None:
-                label, handler = tertiary_action
-                action_btn = QPushButton(label)
-                action_btn.setProperty("class", "primary")
-                action_btn.clicked.connect(lambda: handler(asset.id))
-                actions.addWidget(action_btn)
-        elif job.status in (GenerationJobStatus.FAILED, GenerationJobStatus.CANCELLED):
-            retry_btn = QPushButton("Retry")
-            retry_btn.clicked.connect(lambda: on_retry(job.id))
-            actions.addWidget(retry_btn)
-        layout.addLayout(actions)
+        # Kept alive on the tile instance itself -- a QMediaPlayer/
+        # QAudioOutput stops working once garbage-collected.
+        self._player = QMediaPlayer(self)
+        self._audio_output = QAudioOutput(self)
+        self._player.setAudioOutput(self._audio_output)
+
+        preview_row = QHBoxLayout()
+        play_btn = QPushButton("▶ Play")
+        play_btn.setEnabled(asset is not None)
+        if asset is not None:
+            path = ctx.storage_service.resolve_managed_path(asset.relative_path)
+            play_btn.clicked.connect(lambda: self._play(path))
+        preview_row.addWidget(play_btn)
+        duration_text = (
+            f"{asset.duration_seconds:.1f}s"
+            if asset is not None and asset.duration_seconds is not None
+            else "—"
+        )
+        preview_row.addWidget(QLabel(duration_text))
+        preview_row.addStretch(1)
+        layout.addLayout(preview_row)
+
+        _append_common_tile_footer(
+            layout, job, asset,
+            on_approve=on_approve, on_reject=on_reject, on_retry=on_retry, on_cancel=on_cancel,
+            tertiary_badge=tertiary_badge, tertiary_action=tertiary_action,
+        )
+
+    def _play(self, path) -> None:
+        self._player.setSource(QUrl.fromLocalFile(str(path)))
+        self._player.play()
 
 
 class CandidateReviewDialogBase(FormDialog):
@@ -236,6 +325,30 @@ class CandidateReviewDialogBase(FormDialog):
         exactly as before this dialog's logic lived in that module)."""
         show_error(self, title, message)
 
+    def _build_tile(
+        self,
+        job: GenerationJob,
+        asset: Asset | None,
+        *,
+        tertiary_badge: str | None,
+        tertiary_action: TertiaryAction | None,
+    ) -> QWidget:
+        """Which tile widget represents one candidate. Overridable so a
+        non-image modality (Milestone 9: ``AudioCandidateTile``) can
+        replace the thumbnail-based default without touching anything
+        else in this base class."""
+        return CandidateTile(
+            self._ctx,
+            job,
+            asset,
+            on_approve=self._on_approve,
+            on_reject=self._on_reject,
+            on_retry=self._on_retry,
+            on_cancel=self._on_cancel,
+            tertiary_badge=tertiary_badge,
+            tertiary_action=tertiary_action,
+        )
+
     # --- worker orchestration -----------------------------------------------
 
     def _start_worker(self, request) -> None:
@@ -277,17 +390,7 @@ class CandidateReviewDialogBase(FormDialog):
                     asset = session.get(Asset, job.result_asset_id) if job.result_asset_id else None
                     badge, action = self._tertiary_state(session, job, asset)
                     tiles.append(
-                        CandidateTile(
-                            self._ctx,
-                            job,
-                            asset,
-                            on_approve=self._on_approve,
-                            on_reject=self._on_reject,
-                            on_retry=self._on_retry,
-                            on_cancel=self._on_cancel,
-                            tertiary_badge=badge,
-                            tertiary_action=action,
-                        )
+                        self._build_tile(job, asset, tertiary_badge=badge, tertiary_action=action)
                     )
         except OperationalError:
             return

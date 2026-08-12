@@ -87,6 +87,17 @@ class GenerationJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     short_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("shorts.id", ondelete="SET NULL"), nullable=True
     )
+    # Milestone 9: which stable DialogueLine this voice-generation
+    # attempt was for, if any. A real FK (not a JSON-embedded key) —
+    # unlike most per-attempt provenance in ``parameters``, "is a job
+    # already in flight for this exact line" is a real, frequent,
+    # indexed query, not occasional inspection. SET NULL, matching
+    # every other "which structural thing" FK here: a job's history
+    # must survive even if the DialogueLine it targeted is later
+    # superseded by a dialogue_ar edit.
+    dialogue_line_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("dialogue_lines.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     requested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False

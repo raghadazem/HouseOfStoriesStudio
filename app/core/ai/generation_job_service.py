@@ -81,6 +81,7 @@ class GenerationJobService:
         episode_id: uuid.UUID | None = None,
         scene_id: uuid.UUID | None = None,
         short_id: uuid.UUID | None = None,
+        dialogue_line_id: uuid.UUID | None = None,
         retry_of_job_id: uuid.UUID | None = None,
     ) -> GenerationJob:
         """Persist one new ``PENDING`` job.
@@ -104,6 +105,7 @@ class GenerationJobService:
             episode_id=episode_id,
             scene_id=scene_id,
             short_id=short_id,
+            dialogue_line_id=dialogue_line_id,
             retry_of_job_id=retry_of_job_id,
         )
         session.add(job)
@@ -239,6 +241,7 @@ class GenerationJobService:
             episode_id=original.episode_id,
             scene_id=original.scene_id,
             short_id=original.short_id,
+            dialogue_line_id=original.dialogue_line_id,
             retry_of_job_id=original.id,
         )
 
@@ -259,6 +262,7 @@ class GenerationJobService:
         *,
         character_version_id: uuid.UUID | None = None,
         scene_id: uuid.UUID | None = None,
+        dialogue_line_id: uuid.UUID | None = None,
         status: GenerationJobStatus | None = None,
     ) -> list[GenerationJob]:
         query = session.query(GenerationJob)
@@ -266,6 +270,8 @@ class GenerationJobService:
             query = query.filter_by(character_version_id=character_version_id)
         if scene_id is not None:
             query = query.filter_by(scene_id=scene_id)
+        if dialogue_line_id is not None:
+            query = query.filter_by(dialogue_line_id=dialogue_line_id)
         if status is not None:
             query = query.filter_by(status=status)
         return query.order_by(GenerationJob.created_at.desc()).all()

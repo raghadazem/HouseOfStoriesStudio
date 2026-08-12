@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,7 @@ from app.core.services.exceptions import (
     PrivacyViolationError,
     ValidationError,
 )
+from app.core.services.scene_service import SceneService
 from app.core.services.storage_service import StorageService
 
 
@@ -114,6 +116,80 @@ def test_import_asset_rejects_reserved_scene_key_image_role(
 
     # Nothing was imported: no DB row, no file copied anywhere under production/.
     assert session.query(Asset).count() == 0
+
+
+def test_import_asset_rejects_reserved_line_voice_role(
+    session: Session, app_config: AppConfig, source_file: Path
+) -> None:
+    """Mirrors the final_scene_image regression test: the generic/manual
+    import path must never be able to assign "final_line_voice" —
+    only SceneService.set_line_final_take may (see
+    docs/33_MILESTONE_9_REAL_VOICE_PRODUCTION_STATUS.md)."""
+    service = _service(app_config)
+    request = ImportRequest(
+        source_path=source_file, asset_type=AssetType.VOICE, role="final_line_voice"
+    )
+    with pytest.raises(ValidationError, match="reserved"):
+        service.import_asset(session, request)
+
+    assert session.query(Asset).count() == 0
+
+
+def test_import_asset_stores_dialogue_line_id_and_duration(
+    session: Session, app_config: AppConfig, source_file: Path
+) -> None:
+    episode = Episode(slug="ep001_test", number=1, title_ar="ع", title_en="Test", lesson="Sharing")
+    session.add(episode)
+    session.flush()
+    scene = SceneService().add_scene(session, episode.id, dialogue_ar="ميليسا: مرحباً")
+    line = SceneService().sync_dialogue_lines(session, scene.id)[0]
+    service = _service(app_config)
+    request = ImportRequest(
+        source_path=source_file,
+        asset_type=AssetType.VOICE,
+        scene_id=scene.id,
+        dialogue_line_id=line.id,
+        duration_seconds=2.75,
+    )
+
+    asset = service.import_asset(session, request)
+
+    assert asset.dialogue_line_id == line.id
+    assert asset.duration_seconds == 2.75
+
+
+def test_import_asset_rejects_dialogue_line_from_another_scene(
+    session: Session, app_config: AppConfig, source_file: Path
+) -> None:
+    episode = Episode(slug="ep001_test", number=1, title_ar="ع", title_en="Test", lesson="Sharing")
+    session.add(episode)
+    session.flush()
+    ss = SceneService()
+    scene_a = ss.add_scene(session, episode.id, dialogue_ar="ميليسا: مرحباً")
+    scene_b = ss.add_scene(session, episode.id)
+    line = ss.sync_dialogue_lines(session, scene_a.id)[0]
+    service = _service(app_config)
+    request = ImportRequest(
+        source_path=source_file,
+        asset_type=AssetType.VOICE,
+        scene_id=scene_b.id,
+        dialogue_line_id=line.id,
+    )
+
+    with pytest.raises(ValidationError, match="does not belong"):
+        service.import_asset(session, request)
+
+
+def test_import_asset_rejects_unknown_dialogue_line(
+    session: Session, app_config: AppConfig, source_file: Path
+) -> None:
+    service = _service(app_config)
+    request = ImportRequest(
+        source_path=source_file, asset_type=AssetType.VOICE, dialogue_line_id=uuid.uuid4()
+    )
+
+    with pytest.raises(NotFoundError):
+        service.import_asset(session, request)
 
 
 def test_import_asset_detects_duplicate_by_checksum(

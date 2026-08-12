@@ -30,18 +30,23 @@ from app.core.ai.generation_job_service import GenerationJobService
 from app.core.ai.orchestrator import AIOrchestrator
 from app.core.ai.prompt_engine import PromptEngine
 from app.core.ai.providers.gemini_provider import DEFAULT_IMAGE_SIZE
+from app.core.ai.text_normalization import normalize_arabic_line
 from app.core.ai.workflows.character_reference_workflow import CharacterReferenceWorkflow
 from app.core.ai.workflows.scene_image_workflow import SceneImageWorkflow
+from app.core.ai.workflows.voice_line_workflow import VoiceLineWorkflow
 from app.core.db.enums import GenerationJobStatus
-from app.core.models import Asset, GenerationJob, Scene
+from app.core.models import Asset, DialogueLine, GenerationJob, Scene
 from app.core.services.character_version_service import CharacterVersionService
 from app.core.services.exceptions import (
     CharacterLockIncompleteError,
     NotFoundError,
     ValidationError,
 )
+from app.core.services.pronunciation_override_service import PronunciationOverrideService
 from app.core.services.reference_selection_service import ReferenceSelectionService
 from app.core.services.scene_generation_readiness_service import SceneGenerationReadinessService
+from app.core.services.voice_generation_readiness_service import VoiceGenerationReadinessService
+from app.core.services.voice_profile_service import VoiceProfileService
 
 MIN_CANDIDATE_COUNT = 1
 MAX_CANDIDATE_COUNT = 4
@@ -479,6 +484,211 @@ def _run_one_scene_job(
             parameters=dict(job.parameters),
             episode_id=request.episode_id,
             scene_id=request.scene_id,
+            notes=request.notes,
+        )
+    except Exception as err:  # noqa: BLE001 - deliberately broad: every failure must be recorded
+        current = generation_jobs.get_job(session, job.id)
+        if current.status == GenerationJobStatus.CANCEL_REQUESTED:
+            job = generation_jobs.finalize_cancelled_after_running(
+                session,
+                job.id,
+                provider_outcome=f"Cancelled by user; provider call also failed: {err}",
+            )
+        else:
+            job = generation_jobs.mark_failed(
+                session, job.id, error_category=type(err).__name__, error_message=str(err)
+            )
+        session.commit()
+        if on_job_update is not None:
+            on_job_update(job)
+        return
+
+    current = generation_jobs.get_job(session, job.id)
+    if current.status == GenerationJobStatus.CANCEL_REQUESTED:
+        job = generation_jobs.finalize_cancelled_after_running(
+            session,
+            job.id,
+            provider_outcome=(
+                "Cancelled by user; provider completed successfully after "
+                "cancellation was requested. Result asset was created but not "
+                "promoted for review."
+            ),
+            result_asset_id=result.asset.id,
+        )
+    else:
+        job = generation_jobs.mark_succeeded(session, job.id, result_asset_id=result.asset.id)
+        result.asset.generation_job_id = job.id
+    session.commit()
+    if on_job_update is not None:
+        on_job_update(job)
+
+
+# ============================================================= Voice Lines
+
+
+@dataclass(frozen=True)
+class VoiceLineBatchRequest:
+    """Everything one "generate N candidates for one dialogue line" request needs.
+
+    Deliberately per-line, not per-scene: unlike scene-image candidates
+    (which share one prompt), each dialogue line has its own speaker,
+    voice profile, and text -- a scene-level "generate all READY lines"
+    action (Milestone 9 Decision 5) calls this once per line, each with
+    its own batch_id, rather than forcing multiple speakers into one
+    shared batch.
+    """
+
+    provider_name: str
+    dialogue_line_id: uuid.UUID
+    episode_id: uuid.UUID
+    candidate_count: int = 1
+    notes: str | None = None
+    retry_of_job_id: uuid.UUID | None = None
+
+
+def run_voice_line_batch(
+    session: Session,
+    request: VoiceLineBatchRequest,
+    *,
+    orchestrator: AIOrchestrator,
+    generation_jobs: GenerationJobService,
+    readiness: VoiceGenerationReadinessService | None = None,
+    voice_profiles: VoiceProfileService | None = None,
+    pronunciation_overrides: PronunciationOverrideService | None = None,
+    on_job_update: Callable[[GenerationJob], None] | None = None,
+) -> list[GenerationJob]:
+    """Run one logical "generate N candidates for one dialogue line" request.
+
+    Mirrors :func:`run_scene_image_batch`'s shape exactly (fail fast
+    before creating any job row, one shared batch_id, one provider call
+    per job, honest cancellation, commit after every durable
+    transition) -- see that function's docstring for the lifecycle/
+    cancellation contract, unchanged here.
+
+    Fail-fast checks, in order, before any GenerationJob row is created:
+
+    1. candidate_count is in range.
+    2. VoiceGenerationReadinessService reports the line ready (speaker
+       resolved, an approved active voice profile exists, the provider
+       is configured, no already-in-flight job for this exact line) --
+       raises ValidationError naming every blocking reason if not.
+
+    Text normalization (Milestone 9 Decisions 4/9): the line's
+    authored_text is never modified. The exact text sent to the
+    provider is computed once, here, via
+    app.core.ai.text_normalization.normalize_arabic_line using the
+    currently-configured global PronunciationOverride rows, and
+    snapshotted immutably onto every job's
+    parameters["normalized_text_sent"] alongside the untouched
+    authored_text -- both stay inspectable later, never conflated.
+
+    Every candidate in the batch shares the exact same normalized text/
+    voice-profile snapshot -- only candidate_index (inside parameters)
+    distinguishes candidates, exactly like run_scene_image_batch.
+    """
+    if not (MIN_CANDIDATE_COUNT <= request.candidate_count <= MAX_CANDIDATE_COUNT):
+        raise ValidationError(
+            f"candidate_count must be between {MIN_CANDIDATE_COUNT} and "
+            f"{MAX_CANDIDATE_COUNT}, got {request.candidate_count}."
+        )
+
+    line = session.get(DialogueLine, request.dialogue_line_id)
+    if line is None:
+        raise NotFoundError(f"DialogueLine {request.dialogue_line_id} not found.")
+
+    readiness_service = readiness or VoiceGenerationReadinessService()
+    report = readiness_service.evaluate(
+        session, request.dialogue_line_id, provider_name=request.provider_name, orchestrator=orchestrator
+    )
+    if not report.is_ready:
+        raise ValidationError(
+            f"DialogueLine {request.dialogue_line_id} is not ready to generate: "
+            f"{'; '.join(report.blocking_messages)}"
+        )
+
+    provider = orchestrator.get_provider(request.provider_name)
+    if not provider.is_configured():
+        raise ProviderNotConfiguredError(f"Provider {request.provider_name!r} is not configured.")
+    provider_model = getattr(provider, "model", None)
+
+    profiles = voice_profiles or VoiceProfileService()
+    profile = profiles.get_active_voice_profile(
+        session, character_id=line.character_id, speaker_key=line.speaker_key
+    )
+    overrides_service = pronunciation_overrides or PronunciationOverrideService()
+    override_map = {o.term: o.replacement for o in overrides_service.list_overrides(session)}
+    normalized_text = normalize_arabic_line(line.authored_text, pronunciation_overrides=override_map)
+    applied_terms = sorted(term for term in override_map if term in line.authored_text)
+
+    voice_parameters: dict[str, object] = {"voice_id": profile.provider_voice_id}
+    voice_parameters.update(profile.default_parameters)
+
+    if request.retry_of_job_id is not None:
+        batch_id = generation_jobs.get_job(session, request.retry_of_job_id).batch_id
+    else:
+        batch_id = generation_jobs.new_batch_id()
+
+    jobs: list[GenerationJob] = []
+    for index in range(request.candidate_count):
+        job_parameters = {
+            **voice_parameters,
+            "candidate_index": index,
+            "voice_profile_id": str(profile.id),
+            "speaker_raw": line.speaker_raw,
+            "authored_text": line.authored_text,
+            "normalized_text_sent": normalized_text,
+            "pronunciation_overrides_applied": applied_terms,
+        }
+        job = generation_jobs.create_job(
+            session,
+            workflow_name=VoiceLineWorkflow.name,
+            provider_name=request.provider_name,
+            provider_model=provider_model,
+            batch_id=batch_id,
+            prompt_text=normalized_text,
+            parameters=job_parameters,
+            character_id=line.character_id,
+            episode_id=request.episode_id,
+            scene_id=line.scene_id,
+            dialogue_line_id=request.dialogue_line_id,
+            retry_of_job_id=request.retry_of_job_id,
+        )
+        session.commit()
+        jobs.append(job)
+        if on_job_update is not None:
+            on_job_update(job)
+
+    for job in jobs:
+        _run_one_voice_job(session, job, request, orchestrator, generation_jobs, on_job_update)
+    return jobs
+
+
+def _run_one_voice_job(
+    session: Session,
+    job: GenerationJob,
+    request: VoiceLineBatchRequest,
+    orchestrator: AIOrchestrator,
+    generation_jobs: GenerationJobService,
+    on_job_update: Callable[[GenerationJob], None] | None,
+) -> None:
+    current = generation_jobs.get_job(session, job.id)
+    if current.status != GenerationJobStatus.PENDING:
+        return  # already cancelled while queued, before its turn came up
+
+    job = generation_jobs.mark_running(session, job.id)
+    session.commit()
+    if on_job_update is not None:
+        on_job_update(job)
+
+    try:
+        result = orchestrator.run_workflow(
+            session,
+            VoiceLineWorkflow.name,
+            provider_name=request.provider_name,
+            rendered_prompt_text=job.prompt_text,
+            parameters=dict(job.parameters),
+            episode_id=request.episode_id,
+            dialogue_line_id=request.dialogue_line_id,
             notes=request.notes,
         )
     except Exception as err:  # noqa: BLE001 - deliberately broad: every failure must be recorded

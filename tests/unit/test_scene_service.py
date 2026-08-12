@@ -425,3 +425,88 @@ def test_set_scene_key_image_rejects_unknown_asset(session: Session) -> None:
 
     with pytest.raises(NotFoundError):
         ss.set_scene_key_image(session, scene.id, uuid.uuid4())
+
+
+# --- set_line_final_take (Milestone 9) ----------------------------------------
+
+
+def _approved_voice_asset(session: Session, dialogue_line_id: uuid.UUID, **overrides) -> Asset:
+    defaults = {
+        "asset_type": AssetType.VOICE,
+        "original_filename": "take.wav",
+        "relative_path": f"episodes/ep001/audio/voice/{uuid.uuid4()}.wav",
+        "checksum": uuid.uuid4().hex.ljust(64, "0"),
+        "dialogue_line_id": dialogue_line_id,
+        "approval_status": ApprovalStatus.APPROVED,
+    }
+    defaults.update(overrides)
+    asset = Asset(**defaults)
+    session.add(asset)
+    session.flush()
+    return asset
+
+
+def _one_line(session: Session, ss: SceneService):
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="ميليسا: مرحباً")
+    return ss.sync_dialogue_lines(session, scene.id)[0]
+
+
+def test_set_line_final_take_assigns_role(session: Session) -> None:
+    ss = SceneService()
+    line = _one_line(session, ss)
+    asset = _approved_voice_asset(session, line.id)
+
+    result = ss.set_line_final_take(session, line.id, asset.id)
+
+    assert result.role == "final_line_voice"
+
+
+def test_set_line_final_take_replacing_preserves_old_as_approved(session: Session) -> None:
+    ss = SceneService()
+    line = _one_line(session, ss)
+    first = _approved_voice_asset(session, line.id)
+    second = _approved_voice_asset(session, line.id)
+
+    ss.set_line_final_take(session, line.id, first.id)
+    ss.set_line_final_take(session, line.id, second.id)
+
+    session.refresh(first)
+    session.refresh(second)
+    assert first.role is None
+    assert first.approval_status == ApprovalStatus.APPROVED  # preserved, not deleted
+    assert second.role == "final_line_voice"
+
+
+def test_set_line_final_take_rejects_asset_from_another_line(session: Session) -> None:
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="ميليسا: A\nبيلسان: B")
+    line_a, line_b = ss.sync_dialogue_lines(session, scene.id)
+    asset = _approved_voice_asset(session, line_b.id)
+
+    with pytest.raises(ValidationError, match="does not belong"):
+        ss.set_line_final_take(session, line_a.id, asset.id)
+
+
+def test_set_line_final_take_rejects_unapproved_asset(session: Session) -> None:
+    ss = SceneService()
+    line = _one_line(session, ss)
+    asset = _approved_voice_asset(session, line.id, approval_status=ApprovalStatus.DRAFT)
+
+    with pytest.raises(ValidationError, match="approved"):
+        ss.set_line_final_take(session, line.id, asset.id)
+
+
+def test_set_line_final_take_rejects_unknown_line(session: Session) -> None:
+    ss = SceneService()
+    with pytest.raises(NotFoundError):
+        ss.set_line_final_take(session, uuid.uuid4(), uuid.uuid4())
+
+
+def test_set_line_final_take_rejects_unknown_asset(session: Session) -> None:
+    ss = SceneService()
+    line = _one_line(session, ss)
+
+    with pytest.raises(NotFoundError):
+        ss.set_line_final_take(session, line.id, uuid.uuid4())

@@ -26,11 +26,13 @@ EXPECTED_TABLES = {
     "character_references",
     "character_versions",
     "characters",
+    "dialogue_lines",
     "episode_characters",
     "episodes",
     "generation_jobs",
     "license_records",
     "production_tasks",
+    "pronunciation_overrides",
     "prompt_templates",
     "scene_characters",
     "scenes",
@@ -38,6 +40,7 @@ EXPECTED_TABLES = {
     "short_scenes",
     "shorts",
     "songs",
+    "voice_profiles",
 }
 
 

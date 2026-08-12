@@ -14,11 +14,18 @@ from dataclasses import dataclass, field
 from sqlalchemy.orm import Session
 
 from app.core.db.enums import ApprovalStatus
-from app.core.models import Asset, Character, Episode, Scene
-from app.core.models.asset import ROLE_FINAL_SCENE_IMAGE
+from app.core.models import Asset, Character, DialogueLine, Episode, Scene
+from app.core.models.asset import ROLE_FINAL_LINE_VOICE, ROLE_FINAL_SCENE_IMAGE
+from app.core.models.voice_profile import SPEAKER_KEY_NARRATOR
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.services.prompt_composer_service import PromptComposerService
+
+# Matched case/whitespace-insensitively against a stripped speaker
+# string that didn't resolve to any Character -- deliberately small
+# and fixed (not a database table): unlike pronunciation, "who counts
+# as the narrator" is a structural concept, not growable content.
+_NARRATOR_ALIASES = frozenset({"narrator", "الراوي", "راوي"})
 
 _UPDATABLE_FIELDS = {
     "title",
@@ -132,7 +139,14 @@ class SceneService:
         return scene
 
     def update_scene(self, session: Session, scene_id: uuid.UUID, **fields: object) -> Scene:
-        """Edit scene content. Use :meth:`reorder_scenes` to change ``order_index``."""
+        """Edit scene content. Use :meth:`reorder_scenes` to change ``order_index``.
+
+        Automatically re-syncs :class:`DialogueLine` rows (see
+        :meth:`sync_dialogue_lines`) whenever ``dialogue_ar`` is among
+        the changed fields — the founder never has to remember a
+        separate "sync" step, and ``DialogueLine`` can never drift out
+        of date with the text that's actually authored.
+        """
         scene = self.get_scene(session, scene_id)
         if "order_index" in fields:
             raise ValidationError("Use reorder_scenes() to change order_index, not update_scene().")
@@ -142,6 +156,8 @@ class SceneService:
         for key, value in fields.items():
             setattr(scene, key, value)
         session.flush()
+        if "dialogue_ar" in fields:
+            self.sync_dialogue_lines(session, scene_id)
         return scene
 
     def delete_scene(self, session: Session, scene_id: uuid.UUID, *, force: bool = False) -> None:
@@ -341,6 +357,152 @@ class SceneService:
         session.flush()
         return asset
 
+    def set_line_final_take(
+        self, session: Session, dialogue_line_id: uuid.UUID, asset_id: uuid.UUID
+    ) -> Asset:
+        """Make ``asset_id`` the current approved take for ``dialogue_line_id``.
+
+        Exact mirror of :meth:`set_scene_key_image` for voice lines:
+        the only path that may assign ``ROLE_FINAL_LINE_VOICE``
+        (``AssetImportService`` refuses it), guaranteeing at most one
+        ``Asset`` holds it per line — whatever asset currently holds it
+        has the role cleared first, in the same flush; it stays
+        ``approved`` and fully intact, never deleted.
+
+        Raises:
+            NotFoundError: The line or asset doesn't exist.
+            ValidationError: The asset doesn't belong to this line, or
+                isn't ``approved``.
+        """
+        line = session.get(DialogueLine, dialogue_line_id)
+        if line is None:
+            raise NotFoundError(f"DialogueLine {dialogue_line_id} not found.")
+        asset = session.get(Asset, asset_id)
+        if asset is None:
+            raise NotFoundError(f"Asset {asset_id} not found.")
+        if asset.dialogue_line_id != line.id:
+            raise ValidationError(
+                f"Asset {asset_id} does not belong to DialogueLine {dialogue_line_id}."
+            )
+        if asset.approval_status != ApprovalStatus.APPROVED:
+            raise ValidationError("Only an approved asset may become a line's final take.")
+
+        previous = (
+            session.query(Asset)
+            .filter_by(dialogue_line_id=dialogue_line_id, role=ROLE_FINAL_LINE_VOICE)
+            .filter(Asset.id != asset_id)
+            .all()
+        )
+        for old in previous:
+            old.role = None
+        asset.role = ROLE_FINAL_LINE_VOICE
+        session.flush()
+        return asset
+
+    def resolve_speaker(
+        self, session: Session, speaker_raw: str
+    ) -> tuple[uuid.UUID | None, str | None]:
+        """Resolve a raw ``dialogue_ar`` speaker string to a Character or the Narrator.
+
+        Returns ``(character_id, speaker_key)`` — exactly one is set on
+        a successful resolution, both are ``None`` when the speaker is
+        unresolved (never guessed; the caller must report this as a
+        blocker, never silently fall back to a different voice).
+        """
+        normalized = speaker_raw.strip()
+        character = (
+            session.query(Character)
+            .filter((Character.name_ar == normalized) | (Character.name_en == normalized))
+            .one_or_none()
+        )
+        if character is not None:
+            return character.id, None
+        if normalized.lower() in _NARRATOR_ALIASES:
+            return None, SPEAKER_KEY_NARRATOR
+        return None, None
+
+    def sync_dialogue_lines(self, session: Session, scene_id: uuid.UUID) -> list[DialogueLine]:
+        """Reconcile this scene's :class:`DialogueLine` rows against ``dialogue_ar``.
+
+        ``Scene.dialogue_ar`` stays the single authored source of
+        truth; this method never originates content, only maintains a
+        stable-identity structural index over it. Matching is exact on
+        ``(speaker_raw, authored_text)``, consumed FIFO per key so
+        duplicate identical lines from the same speaker never
+        accidentally collapse onto one row: a line surviving reorder or
+        having another line inserted before it keeps its id; a line
+        whose own words changed is treated as superseded (its history
+        stays queryable via ``is_current=False``, never deleted) and a
+        new row is created — previously-generated audio genuinely no
+        longer matches changed text, so losing that row's "currency" is
+        correct, not a bug. See
+        ``docs/33_MILESTONE_9_REAL_VOICE_PRODUCTION_STATUS.md``.
+        """
+        scene = self.get_scene(session, scene_id)
+        parsed = self._parse_dialogue_lines(scene.dialogue_ar)
+
+        existing = (
+            session.query(DialogueLine).filter_by(scene_id=scene_id, is_current=True).all()
+        )
+        by_key: dict[tuple[str, str], list[DialogueLine]] = {}
+        for row in existing:
+            by_key.setdefault((row.speaker_raw, row.authored_text), []).append(row)
+
+        result: list[DialogueLine] = []
+        matched_ids: set[uuid.UUID] = set()
+        for index, (speaker, text) in enumerate(parsed):
+            bucket = by_key.get((speaker, text))
+            row = bucket.pop(0) if bucket else None
+            character_id, speaker_key = self.resolve_speaker(session, speaker)
+            if row is not None:
+                row.order_index = index
+                row.character_id = character_id
+                row.speaker_key = speaker_key
+            else:
+                row = DialogueLine(
+                    scene_id=scene_id,
+                    order_index=index,
+                    speaker_raw=speaker,
+                    character_id=character_id,
+                    speaker_key=speaker_key,
+                    authored_text=text,
+                    is_current=True,
+                )
+                session.add(row)
+                session.flush()
+            matched_ids.add(row.id)
+            result.append(row)
+
+        for row in existing:
+            if row.id not in matched_ids:
+                row.is_current = False
+
+        session.flush()
+        return result
+
+    @staticmethod
+    def _parse_dialogue_lines(dialogue_ar: str | None) -> list[tuple[str, str]]:
+        """Parse ``"Speaker: line text"`` rows out of a dialogue_ar blob.
+
+        The single shared parser behind both :meth:`build_voice_package`
+        (a pure, non-persisted derivation) and :meth:`sync_dialogue_lines`
+        (a persisted, reconciled index) — never duplicated between them.
+        """
+        if not dialogue_ar:
+            return []
+        pairs: list[tuple[str, str]] = []
+        for raw_line in dialogue_ar.splitlines():
+            stripped = raw_line.strip()
+            if not stripped or ":" not in stripped:
+                continue
+            speaker, _, text = stripped.partition(":")
+            speaker = speaker.strip()
+            text = text.strip()
+            if not speaker or not text:
+                continue
+            pairs.append((speaker, text))
+        return pairs
+
     def list_episode_scenes(self, session: Session, episode_id: uuid.UUID) -> list[Scene]:
         return (
             session.query(Scene)
@@ -366,17 +528,7 @@ class SceneService:
         scenes = self.list_episode_scenes(session, episode_id)
         lines: list[VoiceLine] = []
         for scene in scenes:
-            if not scene.dialogue_ar:
-                continue
-            for raw_line in scene.dialogue_ar.splitlines():
-                stripped = raw_line.strip()
-                if not stripped or ":" not in stripped:
-                    continue
-                speaker, _, text = stripped.partition(":")
-                speaker = speaker.strip()
-                text = text.strip()
-                if not speaker or not text:
-                    continue
+            for speaker, text in self._parse_dialogue_lines(scene.dialogue_ar):
                 lines.append(
                     VoiceLine(
                         scene_order_index=scene.order_index,

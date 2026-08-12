@@ -14,10 +14,23 @@ rejected as a re-import of the first.
 from __future__ import annotations
 
 import hashlib
+import io
 import tempfile
+import wave
 from pathlib import Path
 
 from app.core.ai.provider_interface import AIProvider, GenerationRequest, GenerationResult
+
+# Milestone 9: voice-modality output must be a genuinely parseable WAV
+# file — VoiceLineWorkflow measures real duration via Python's ``wave``
+# module for every provider, including this one, per the founder's
+# "duration is always measured from the real file, never invented"
+# rule. Fixed at exactly 1.0 second (8000 frames @ 8000Hz) so tests can
+# assert an exact, predictable duration; the digest still fills the
+# actual sample data, so two different requests remain byte-distinct
+# (required for AssetImportService's duplicate-checksum detection).
+_MOCK_VOICE_FRAMERATE = 8000
+_MOCK_VOICE_DURATION_SECONDS = 1.0
 
 _EXTENSION_BY_MODALITY: dict[str, str] = {
     "image": ".png",
@@ -92,6 +105,8 @@ class MockProvider(AIProvider):
 
     @staticmethod
     def _build_payload(request: GenerationRequest, digest: str) -> bytes:
+        if request.modality == "voice":
+            return MockProvider._build_wav_payload(digest)
         extension = _EXTENSION_BY_MODALITY[request.modality]
         header = _MAGIC_BYTES.get(extension, b"")
         body = (
@@ -100,3 +115,22 @@ class MockProvider(AIProvider):
             f"digest={digest}\n"
         ).encode()
         return header + body
+
+    @staticmethod
+    def _build_wav_payload(digest: str) -> bytes:
+        """A real, ``wave``-openable mono 16-bit PCM file, exactly
+        ``_MOCK_VOICE_DURATION_SECONDS`` long, with the digest tiled to
+        fill the sample data (deterministic, byte-distinct per request)."""
+        frame_count = int(_MOCK_VOICE_FRAMERATE * _MOCK_VOICE_DURATION_SECONDS)
+        sample_width = 2  # 16-bit
+        needed_bytes = frame_count * sample_width
+        digest_bytes = bytes.fromhex(digest)
+        samples = (digest_bytes * (needed_bytes // len(digest_bytes) + 1))[:needed_bytes]
+
+        buffer = io.BytesIO()
+        with wave.open(buffer, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(sample_width)
+            wav_file.setframerate(_MOCK_VOICE_FRAMERATE)
+            wav_file.writeframes(samples)
+        return buffer.getvalue()
