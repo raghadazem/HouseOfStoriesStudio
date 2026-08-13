@@ -318,3 +318,39 @@ def test_narrator_line_is_ready_via_speaker_key_profile(
 
     labels = [label.text() for label in panel.findChildren(QLabel)]
     assert any("Ready" in text for text in labels)
+
+
+# --- bird / turtle mother (non-character speaker_key) GUI visibility ---------
+
+
+def test_profiles_summary_includes_bird_and_turtle_mother_with_approved_active_state(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    """The Voice Profiles summary must show every NON_CHARACTER_SPEAKERS
+    entry, not just Characters + Narrator -- Bird and Turtle Mother must
+    appear with their own approved/active status, exactly like any other
+    speaker, without being hardcoded as unrelated GUI-only rows."""
+    from app.core.models.voice_profile import SPEAKER_KEY_BIRD, SPEAKER_KEY_TURTLE_MOTHER
+
+    episode_id = _episode(gui_context)
+    with gui_context.session_scope() as session:
+        vps = VoiceProfileService()
+        for speaker_key in (SPEAKER_KEY_BIRD, SPEAKER_KEY_TURTLE_MOTHER):
+            profile = vps.create_voice_profile(
+                session, speaker_key=speaker_key, display_name=speaker_key,
+                provider_name="mock_provider", provider_voice_id=f"voice-{speaker_key}",
+            )
+            vps.set_active_voice_profile(session, profile.id)
+            ApprovalService().approve_entity(session, "voice_profile", profile.id, decided_by="founder")
+
+    panel = vw.VoiceWorkspacePanel(gui_context, theme)
+    qtbot.addWidget(panel)
+    panel.refresh(episode_id)
+
+    rows_text = [label.text() for label in panel._profiles_summary.findChildren(QLabel)]
+    assert any(text == "Bird" for text in rows_text)
+    assert any(text == "Turtle Mother" for text in rows_text)
+    bird_status = next(text for text in rows_text if text.startswith("bird ("))
+    assert "(approved)" in bird_status
+    turtle_mother_status = next(text for text in rows_text if text.startswith("turtle_mother ("))
+    assert "(approved)" in turtle_mother_status

@@ -16,16 +16,10 @@ from sqlalchemy.orm import Session
 from app.core.db.enums import ApprovalStatus
 from app.core.models import Asset, Character, DialogueLine, Episode, Scene
 from app.core.models.asset import ROLE_FINAL_LINE_VOICE, ROLE_FINAL_SCENE_IMAGE
-from app.core.models.voice_profile import SPEAKER_KEY_NARRATOR
+from app.core.models.voice_profile import NON_CHARACTER_SPEAKERS
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import ConflictError, NotFoundError, ValidationError
 from app.core.services.prompt_composer_service import PromptComposerService
-
-# Matched case/whitespace-insensitively against a stripped speaker
-# string that didn't resolve to any Character -- deliberately small
-# and fixed (not a database table): unlike pronunciation, "who counts
-# as the narrator" is a structural concept, not growable content.
-_NARRATOR_ALIASES = frozenset({"narrator", "الراوي", "راوي"})
 
 _UPDATABLE_FIELDS = {
     "title",
@@ -403,12 +397,16 @@ class SceneService:
     def resolve_speaker(
         self, session: Session, speaker_raw: str
     ) -> tuple[uuid.UUID | None, str | None]:
-        """Resolve a raw ``dialogue_ar`` speaker string to a Character or the Narrator.
+        """Resolve a raw ``dialogue_ar`` speaker string to a Character or a
+        known non-Character speaker (Narrator, Bird, Turtle Mother, ...).
 
         Returns ``(character_id, speaker_key)`` — exactly one is set on
         a successful resolution, both are ``None`` when the speaker is
         unresolved (never guessed; the caller must report this as a
-        blocker, never silently fall back to a different voice).
+        blocker, never silently fall back to a different voice). Matching
+        against :data:`~app.core.models.voice_profile.NON_CHARACTER_SPEAKERS`
+        is exact (case-insensitively) against each entry's ``aliases`` --
+        no fuzzy matching, no substrings.
         """
         normalized = speaker_raw.strip()
         character = (
@@ -418,8 +416,10 @@ class SceneService:
         )
         if character is not None:
             return character.id, None
-        if normalized.lower() in _NARRATOR_ALIASES:
-            return None, SPEAKER_KEY_NARRATOR
+        lowered = normalized.lower()
+        for speaker in NON_CHARACTER_SPEAKERS:
+            if lowered in speaker.aliases:
+                return None, speaker.speaker_key
         return None, None
 
     def sync_dialogue_lines(self, session: Session, scene_id: uuid.UUID) -> list[DialogueLine]:

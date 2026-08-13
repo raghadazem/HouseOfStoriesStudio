@@ -25,6 +25,7 @@ already established for canon reference images.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sqlalchemy import JSON, Boolean, ForeignKey, String, Text
@@ -36,10 +37,56 @@ if TYPE_CHECKING:
     from app.core.models.asset import Asset
     from app.core.models.character import Character
 
-# The one non-Character speaker identity Milestone 9 needs. Kept as a
-# plain string constant (not an enum) since a future episode could
-# introduce another non-character speaker without a schema change.
+# speaker_key values kept as plain string constants (not an enum) since a
+# future episode can introduce another non-character speaker without a
+# schema change -- see NON_CHARACTER_SPEAKERS below.
 SPEAKER_KEY_NARRATOR = "narrator"
+SPEAKER_KEY_BIRD = "bird"
+SPEAKER_KEY_TURTLE_MOTHER = "turtle_mother"
+
+
+@dataclass(frozen=True)
+class NonCharacterSpeaker:
+    """One non-Character speaker identity: its persisted ``speaker_key``,
+    a human-readable label for the GUI, and every raw ``dialogue_ar``
+    speaker string that should resolve to it.
+
+    ``aliases`` is matched case-insensitively (Arabic text is unaffected
+    by ``str.lower()``, so this is free for English aliases without a
+    separate code path). Exact membership only -- no fuzzy matching, no
+    substrings, no inference. Adding a future non-character speaker (e.g.
+    a new episode's one-off supporting character) means adding one more
+    entry to :data:`NON_CHARACTER_SPEAKERS`, not a new table or a new
+    special case in :meth:`~app.core.services.scene_service.SceneService.resolve_speaker`.
+    """
+
+    speaker_key: str
+    display_label: str
+    aliases: frozenset[str]
+
+
+# The complete set of non-Character speaker identities Milestone 9 (and
+# Episode 001's Bird/Turtle Mother extension) needs. The single source of
+# truth for both SceneService.resolve_speaker's alias matching and the
+# Voice tab's Voice Profiles summary -- neither re-derives or duplicates
+# this list.
+NON_CHARACTER_SPEAKERS: tuple[NonCharacterSpeaker, ...] = (
+    NonCharacterSpeaker(
+        speaker_key=SPEAKER_KEY_NARRATOR,
+        display_label="Narrator",
+        aliases=frozenset({"narrator", "الراوي", "راوي"}),
+    ),
+    NonCharacterSpeaker(
+        speaker_key=SPEAKER_KEY_BIRD,
+        display_label="Bird",
+        aliases=frozenset({"bird", "العصفور"}),
+    ),
+    NonCharacterSpeaker(
+        speaker_key=SPEAKER_KEY_TURTLE_MOTHER,
+        display_label="Turtle Mother",
+        aliases=frozenset({"turtle_mother", "turtle mother", "أم السلحفاة"}),
+    ),
+)
 
 
 class VoiceProfile(UUIDPrimaryKeyMixin, TimestampMixin, Base):

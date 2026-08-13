@@ -13,7 +13,11 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.core.models import Character, DialogueLine, Episode
-from app.core.models.voice_profile import SPEAKER_KEY_NARRATOR
+from app.core.models.voice_profile import (
+    SPEAKER_KEY_BIRD,
+    SPEAKER_KEY_NARRATOR,
+    SPEAKER_KEY_TURTLE_MOTHER,
+)
 from app.core.services.scene_service import SceneService
 
 
@@ -205,6 +209,53 @@ def test_resolve_speaker_unresolved_returns_none_none(session: Session) -> None:
 
     assert character_id is None
     assert speaker_key is None
+
+
+def test_resolve_speaker_matches_bird_alias_arabic(session: Session) -> None:
+    ss = SceneService()
+
+    character_id, speaker_key = ss.resolve_speaker(session, "العصفور")
+
+    assert character_id is None
+    assert speaker_key == SPEAKER_KEY_BIRD
+
+
+def test_resolve_speaker_matches_bird_alias_english_case_insensitive(session: Session) -> None:
+    ss = SceneService()
+
+    character_id, speaker_key = ss.resolve_speaker(session, "Bird")
+
+    assert character_id is None
+    assert speaker_key == SPEAKER_KEY_BIRD
+
+
+def test_resolve_speaker_matches_turtle_mother_alias_arabic(session: Session) -> None:
+    ss = SceneService()
+
+    character_id, speaker_key = ss.resolve_speaker(session, "أم السلحفاة")
+
+    assert character_id is None
+    assert speaker_key == SPEAKER_KEY_TURTLE_MOTHER
+
+
+def test_resolve_speaker_matches_turtle_mother_alias_english(session: Session) -> None:
+    ss = SceneService()
+
+    character_id, speaker_key = ss.resolve_speaker(session, "Turtle Mother")
+
+    assert character_id is None
+    assert speaker_key == SPEAKER_KEY_TURTLE_MOTHER
+
+
+def test_resolve_speaker_no_substring_or_fuzzy_match(session: Session) -> None:
+    """A raw speaker string that merely *contains* a known alias, or is a
+    near-miss of one, must stay unresolved -- exact membership only."""
+    ss = SceneService()
+
+    for near_miss in ("Birdwatcher", "العصفورة", "أم السلحفاة الكبيرة", "turtle mothers"):
+        character_id, speaker_key = ss.resolve_speaker(session, near_miss)
+        assert character_id is None, near_miss
+        assert speaker_key is None, near_miss
 
 
 def test_sync_resolves_speakers_on_each_line(session: Session) -> None:

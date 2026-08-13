@@ -49,7 +49,7 @@ from app.core.ai.text_normalization import normalize_arabic_line
 from app.core.db.enums import ApprovalDecision, ApprovalStatus
 from app.core.models import Asset, DialogueLine
 from app.core.models.asset import ROLE_FINAL_LINE_VOICE
-from app.core.models.voice_profile import SPEAKER_KEY_NARRATOR
+from app.core.models.voice_profile import NON_CHARACTER_SPEAKERS
 from app.core.services.exceptions import ServiceError
 from app.core.services.pronunciation_override_service import PronunciationOverrideService
 from app.core.services.voice_generation_readiness_service import (
@@ -629,7 +629,10 @@ class _VoiceProfilesSummary(QFrame):
             speakers: list[tuple[uuid.UUID | None, str | None, str]] = [
                 (c.id, None, c.name_en) for c in characters
             ]
-            speakers.append((None, SPEAKER_KEY_NARRATOR, "Narrator"))
+            speakers.extend(
+                (None, speaker.speaker_key, speaker.display_label)
+                for speaker in NON_CHARACTER_SPEAKERS
+            )
             vps = VoiceProfileService()
             rows = []
             for character_id, speaker_key, label in speakers:

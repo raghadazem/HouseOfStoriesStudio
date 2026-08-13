@@ -90,8 +90,14 @@ def test_populate_marks_scene_9_as_song_scene_without_touching_dialogue(session:
 
 def test_populate_voice_readiness_counts_match_expected_song_scene_split(session: Session) -> None:
     """The exact Episode 001 Voice Setup checkpoint counts: 47 total
-    lines, 3 of them in the song scene, 44 ordinary-TTS-eligible, with
-    only the bird and turtle-mother speakers still unresolved."""
+    lines, 3 of them in the song scene, 44 ordinary-TTS-eligible -- and
+    every one of those 44 resolves to a known speaker (Character or a
+    NON_CHARACTER_SPEAKERS entry), including the Bird and Turtle Mother
+    lines. Speaker *resolution* is independent of VoiceProfile setup --
+    these lines can still be BLOCKED on a missing/unapproved voice
+    profile without being unresolved-speaker blocked; see
+    test_populate_with_all_six_voice_profiles_reaches_full_readiness for
+    the full 44/44 READY case."""
     from app.core.ai.orchestrator import AIOrchestrator
     from app.core.services.voice_generation_readiness_service import VoiceGenerationReadinessService
 
@@ -118,7 +124,75 @@ def test_populate_voice_readiness_counts_match_expected_song_scene_split(session
     assert total_lines == 47
     assert song_lines == 3
     assert total_lines - song_lines == 44
-    assert unresolved_spoken_speakers == {"العصفور", "أم السلحفاة"}
+    assert unresolved_spoken_speakers == set()
+
+
+def test_populate_with_all_six_voice_profiles_reaches_full_readiness(session: Session) -> None:
+    """The full Episode 001 Voice Setup checkpoint target: once every one
+    of the six speakers (3 Characters + Narrator/Bird/Turtle Mother, all
+    resolved via NON_CHARACTER_SPEAKERS) has an active, approved
+    VoiceProfile, all 44 spoken lines reach READY and the 3 song lines
+    stay excluded (not counted as blocked)."""
+    from app.core.ai.orchestrator import AIOrchestrator
+    from app.core.models.voice_profile import (
+        SPEAKER_KEY_BIRD,
+        SPEAKER_KEY_NARRATOR,
+        SPEAKER_KEY_TURTLE_MOTHER,
+    )
+    from app.core.services.voice_generation_readiness_service import VoiceGenerationReadinessService
+    from app.core.services.voice_profile_service import VoiceProfileService
+
+    episode = populate_episode_001_production_content(session)
+    vps = VoiceProfileService()
+    approvals = ApprovalService()
+    readiness = VoiceGenerationReadinessService()
+    orchestrator = AIOrchestrator()
+
+    character_ids = {
+        c.slug: c.id
+        for c in session.query(Character).filter(
+            Character.slug.in_({MELISSA_SLUG, BILSAN_SLUG, TORTOR_SLUG})
+        )
+    }
+    profile_specs = [
+        {"character_id": character_ids[MELISSA_SLUG]},
+        {"character_id": character_ids[BILSAN_SLUG]},
+        {"character_id": character_ids[TORTOR_SLUG]},
+        {"speaker_key": SPEAKER_KEY_NARRATOR},
+        {"speaker_key": SPEAKER_KEY_BIRD},
+        {"speaker_key": SPEAKER_KEY_TURTLE_MOTHER},
+    ]
+    for spec in profile_specs:
+        profile = vps.create_voice_profile(
+            session, display_name="V", provider_name="mock_provider",
+            provider_voice_id="v1", **spec,
+        )
+        vps.set_active_voice_profile(session, profile.id)
+        approvals.approve_entity(session, "voice_profile", profile.id, decided_by="founder")
+
+    total_lines = 0
+    song_lines = 0
+    ready_lines = 0
+    blocked: list[tuple[str, list[str]]] = []
+    for scene in episode.scenes:
+        for report in readiness.evaluate_scene(
+            session, scene.id, provider_name="mock_provider", orchestrator=orchestrator
+        ):
+            total_lines += 1
+            if report.is_song_scene:
+                song_lines += 1
+                assert not report.is_ready
+                assert report.blocking_messages == []
+                continue
+            if report.is_ready:
+                ready_lines += 1
+            else:
+                blocked.append((str(report.dialogue_line_id), report.blocking_messages))
+
+    assert total_lines == 47
+    assert song_lines == 3
+    assert ready_lines == 44, blocked
+    assert blocked == []
 
 
 def test_populate_voice_package_covers_every_named_speaker(session: Session) -> None:

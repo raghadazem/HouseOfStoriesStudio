@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session
 from app.core.ai.generation_job_service import GenerationJobService
 from app.core.ai.orchestrator import AIOrchestrator
 from app.core.models import Character, Episode
-from app.core.models.voice_profile import SPEAKER_KEY_NARRATOR
+from app.core.models.voice_profile import (
+    SPEAKER_KEY_BIRD,
+    SPEAKER_KEY_NARRATOR,
+    SPEAKER_KEY_TURTLE_MOTHER,
+)
 from app.core.services.approval_service import ApprovalService
 from app.core.services.exceptions import NotFoundError
 from app.core.services.scene_service import SceneService
@@ -131,6 +135,36 @@ def test_evaluate_narrator_line_resolves_via_speaker_key(session: Session) -> No
     approvals = ApprovalService()
     line = _line_for(session, ss, "Narrator: كان يا ما كان")
     _ready_profile(session, vps, approvals, speaker_key=SPEAKER_KEY_NARRATOR)
+    service = VoiceGenerationReadinessService(voice_profiles=vps, approvals=approvals, scenes=ss)
+
+    report = service.evaluate(
+        session, line.id, provider_name="mock_provider", orchestrator=_orchestrator()
+    )
+
+    assert report.is_ready, report.blocking_messages
+
+
+def test_evaluate_bird_line_resolves_via_speaker_key(session: Session) -> None:
+    ss = SceneService()
+    vps = VoiceProfileService()
+    approvals = ApprovalService()
+    line = _line_for(session, ss, "العصفور: سمعتُ أصواتاً قرب الجسر")
+    _ready_profile(session, vps, approvals, speaker_key=SPEAKER_KEY_BIRD)
+    service = VoiceGenerationReadinessService(voice_profiles=vps, approvals=approvals, scenes=ss)
+
+    report = service.evaluate(
+        session, line.id, provider_name="mock_provider", orchestrator=_orchestrator()
+    )
+
+    assert report.is_ready, report.blocking_messages
+
+
+def test_evaluate_turtle_mother_line_resolves_via_speaker_key(session: Session) -> None:
+    ss = SceneService()
+    vps = VoiceProfileService()
+    approvals = ApprovalService()
+    line = _line_for(session, ss, "أم السلحفاة: طُرطُر! يا صغيرتي!")
+    _ready_profile(session, vps, approvals, speaker_key=SPEAKER_KEY_TURTLE_MOTHER)
     service = VoiceGenerationReadinessService(voice_profiles=vps, approvals=approvals, scenes=ss)
 
     report = service.evaluate(
