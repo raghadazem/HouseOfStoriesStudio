@@ -52,11 +52,44 @@ _VOICE_SETTINGS_KEYS = frozenset(
     {"stability", "similarity_boost", "style", "speed", "use_speaker_boost"}
 )
 
+# The only fields ever pulled out of an ElevenLabs error response body for
+# a 401/403 message -- an explicit allowlist, not a blocklist, so a
+# response shape this app doesn't already know about can never leak
+# anything through (never the raw body, headers, or request data; an API
+# key/Authorization value has no way to appear here by construction).
+# ElevenLabs' own structured error responses nest these fields under
+# "detail" -- the exact {"detail": {"type", "code", "message", "status",
+# "request_id"}} shape this project observed directly from a real 401
+# ("missing_permissions") during Milestone 9's own smoke testing.
+_SAFE_ERROR_DETAIL_KEYS = ("type", "code", "message", "status")
+
 ClientFactory = Callable[[str], ElevenLabs]
 
 
 def _default_client_factory(api_key: str) -> ElevenLabs:
     return ElevenLabs(api_key=api_key)
+
+
+def _sanitize_error_detail(body: object) -> str | None:
+    """The safe, human-readable subset of an ElevenLabs error body, or
+    ``None`` if it isn't the expected ``{"detail": {...}}`` shape.
+
+    Only ever reads :data:`_SAFE_ERROR_DETAIL_KEYS` off ``body["detail"]``
+    -- never the body itself, never ``err.headers``. This is what turns
+    an opaque "authentication failed (403)" into an actionable message
+    like "type=authentication_error, code=unauthorized, message='The API
+    key you used is missing the permission ... to execute this
+    operation.', status=missing_permissions" without ever risking a
+    leaked credential, even if a future ElevenLabs response accidentally
+    echoed one back in some other field.
+    """
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if not isinstance(detail, dict):
+        return None
+    safe = {key: detail[key] for key in _SAFE_ERROR_DETAIL_KEYS if key in detail}
+    if not safe:
+        return None
+    return ", ".join(f"{key}={value}" for key, value in safe.items())
 
 
 class ElevenLabsProvider(AIProvider):
@@ -159,7 +192,11 @@ class ElevenLabsProvider(AIProvider):
     @staticmethod
     def _map_api_error(err: ApiError) -> ProviderRequestError:
         if err.status_code in (401, 403):
-            return ProviderAuthenticationError(f"ElevenLabs authentication failed ({err.status_code}).")
+            message = f"ElevenLabs authentication failed ({err.status_code})."
+            detail = _sanitize_error_detail(err.body)
+            if detail:
+                message += f" {detail}"
+            return ProviderAuthenticationError(message)
         if err.status_code == 429:
             return ProviderRateLimitError(f"ElevenLabs rate limit or quota exceeded ({err.status_code}).")
         return ProviderRequestError(f"ElevenLabs rejected the request ({err.status_code}): {err.body}")
