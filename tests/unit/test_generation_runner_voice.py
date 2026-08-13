@@ -21,7 +21,7 @@ from app.core.ai.provider_interface import AIProvider, GenerationRequest, Genera
 from app.core.ai.providers.mock_provider import MockProvider
 from app.core.ai.workflows.base import Workflow
 from app.core.ai.workflows.voice_line_workflow import VoiceLineWorkflow
-from app.core.db.enums import AssetType, GenerationJobStatus
+from app.core.db.enums import ApprovalStatus, AssetType, GenerationJobStatus
 from app.core.models import Asset, Character, Episode
 from app.core.services.approval_service import ApprovalService
 from app.core.services.asset_import_service import AssetImportService
@@ -244,6 +244,152 @@ def test_run_batch_sets_asset_dialogue_line_id_and_duration(
     assert asset.asset_type == AssetType.VOICE
     assert asset.duration_seconds == 1.0
     assert asset.generation_job_id == job.id
+
+
+def test_run_batch_snapshots_output_format_from_provider_default(
+    session: Session, app_config: AppConfig
+) -> None:
+    """Milestone 9 compatibility fix: the provider's own effective
+    output_format (whatever ELEVENLABS_OUTPUT_FORMAT/constructor/default
+    resolved to) is snapshotted onto every GenerationJob, generically --
+    run_voice_line_batch never hardcodes a format string itself."""
+
+    class _FakeVoiceProvider(MockProvider):
+        name = "fake_voice_mp3"
+
+        @property
+        def output_format(self) -> str:
+            return "mp3_44100_128"
+
+    ss = SceneService()
+    vps = VoiceProfileService()
+    approvals = ApprovalService()
+    character = Character(slug="melissa", name_ar="ميليسا", name_en="Melissa")
+    session.add(character)
+    session.flush()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="ميليسا: مرحباً")
+    line = ss.sync_dialogue_lines(session, scene.id)[0]
+    profile = vps.create_voice_profile(
+        session, character_id=character.id, display_name="Melissa",
+        provider_name="fake_voice_mp3", provider_voice_id="voice-melissa",
+    )
+    vps.set_active_voice_profile(session, profile.id)
+    approvals.approve_entity(session, "voice_profile", profile.id, decided_by="founder")
+    orchestrator = _orchestrator(app_config, provider_registry={"fake_voice_mp3": _FakeVoiceProvider})
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(provider_name="fake_voice_mp3", dialogue_line_id=line.id, episode_id=episode.id),
+        orchestrator=orchestrator,
+        generation_jobs=GenerationJobService(),
+    )
+
+    assert result[0].parameters["output_format"] == "mp3_44100_128"
+
+
+def test_run_batch_voice_profile_output_format_override_wins_over_provider_default(
+    session: Session, app_config: AppConfig
+) -> None:
+    class _FakeVoiceProvider(MockProvider):
+        name = "fake_voice_mp3_override"
+
+        @property
+        def output_format(self) -> str:
+            return "mp3_44100_128"
+
+    ss = SceneService()
+    vps = VoiceProfileService()
+    approvals = ApprovalService()
+    character = Character(slug="melissa", name_ar="ميليسا", name_en="Melissa")
+    session.add(character)
+    session.flush()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="ميليسا: مرحباً")
+    line = ss.sync_dialogue_lines(session, scene.id)[0]
+    profile = vps.create_voice_profile(
+        session, character_id=character.id, display_name="Melissa",
+        provider_name="fake_voice_mp3_override", provider_voice_id="voice-melissa",
+        default_parameters={"output_format": "wav_44100"},
+    )
+    vps.set_active_voice_profile(session, profile.id)
+    approvals.approve_entity(session, "voice_profile", profile.id, decided_by="founder")
+    orchestrator = _orchestrator(
+        app_config, provider_registry={"fake_voice_mp3_override": _FakeVoiceProvider}
+    )
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(
+            provider_name="fake_voice_mp3_override", dialogue_line_id=line.id, episode_id=episode.id
+        ),
+        orchestrator=orchestrator,
+        generation_jobs=GenerationJobService(),
+    )
+
+    assert result[0].parameters["output_format"] == "wav_44100"
+
+
+def test_run_batch_produces_valid_draft_mp3_asset_with_measured_duration(
+    session: Session, app_config: AppConfig
+) -> None:
+    """Full pipeline, real ElevenLabsProvider class (fake HTTP client,
+    real MPEG frame bytes) through run_voice_line_batch ->
+    VoiceLineWorkflow -> AssetImportService: proves output_format
+    provenance, the truthful .mp3 extension, and tinytag-measured
+    duration all agree, and the resulting Asset stays DRAFT."""
+    from app.core.ai.providers.elevenlabs_provider import ElevenLabsProvider
+
+    mp3_header = bytes([0xFF, 0xFB, 0x90, 0xC0])
+    frame_size = 417  # floor(144 * 128000 / 44100)
+    mp3_frame = mp3_header + bytes(frame_size - len(mp3_header))
+    mp3_bytes = mp3_frame * 10
+
+    class _FakeTextToSpeech:
+        def convert(self, voice_id, *, text, model_id, output_format, voice_settings):
+            return iter([mp3_bytes])
+
+    class _FakeClient:
+        def __init__(self) -> None:
+            self.text_to_speech = _FakeTextToSpeech()
+
+    class _FakeElevenLabsProvider(ElevenLabsProvider):
+        name = "elevenlabs"
+
+        def __init__(self) -> None:
+            super().__init__(api_key="fake-key", client_factory=lambda api_key: _FakeClient())
+
+    ss = SceneService()
+    vps = VoiceProfileService()
+    approvals = ApprovalService()
+    character = Character(slug="melissa", name_ar="ميليسا", name_en="Melissa")
+    session.add(character)
+    session.flush()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="ميليسا: مرحباً")
+    line = ss.sync_dialogue_lines(session, scene.id)[0]
+    profile = vps.create_voice_profile(
+        session, character_id=character.id, display_name="Melissa",
+        provider_name="elevenlabs", provider_voice_id="voice-melissa",
+    )
+    vps.set_active_voice_profile(session, profile.id)
+    approvals.approve_entity(session, "voice_profile", profile.id, decided_by="founder")
+    orchestrator = _orchestrator(app_config, provider_registry={"elevenlabs": _FakeElevenLabsProvider})
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(provider_name="elevenlabs", dialogue_line_id=line.id, episode_id=episode.id),
+        orchestrator=orchestrator,
+        generation_jobs=GenerationJobService(),
+    )
+
+    job = result[0]
+    assert job.status == GenerationJobStatus.SUCCEEDED
+    assert job.parameters["output_format"] == "mp3_44100_128"
+    asset = session.get(Asset, job.result_asset_id)
+    assert asset.relative_path.endswith(".mp3")
+    assert asset.approval_status == ApprovalStatus.DRAFT
+    assert asset.duration_seconds == pytest.approx(10 * (1152 / 44100))
 
 
 def test_run_batch_threads_retry_of_job_id_onto_the_new_job(

@@ -116,17 +116,33 @@ def test_generate_requires_voice_id_parameter() -> None:
 # --- success path --------------------------------------------------------------
 
 
-def test_generate_success_writes_temp_wav_file() -> None:
-    tts = _FakeTextToSpeech(chunks=[b"real ", b"wav ", b"bytes"])
+def test_generate_success_writes_temp_mp3_file_by_default() -> None:
+    tts = _FakeTextToSpeech(chunks=[b"real ", b"mp3 ", b"bytes"])
     provider = _provider(tts, model="eleven_multilingual_v2")
 
     result = provider.generate(_request())
 
     assert result.provider_name == "elevenlabs"
     assert result.output_path.is_file()
+    assert result.output_path.read_bytes() == b"real mp3 bytes"
+    assert result.output_path.suffix == ".mp3"
+    assert "eleven_multilingual_v2" in result.raw_response_summary
+
+
+def test_generate_success_writes_temp_wav_file_when_wav_requested() -> None:
+    """The original WAV master remains fully supported -- explicit
+    per-request override, same as a Pro-tier account opting back in via
+    ELEVENLABS_OUTPUT_FORMAT=wav_44100."""
+    tts = _FakeTextToSpeech(chunks=[b"real ", b"wav ", b"bytes"])
+    provider = _provider(tts)
+
+    result = provider.generate(
+        _request(parameters={"voice_id": "voice-abc", "output_format": "wav_44100"})
+    )
+
+    assert result.output_path.is_file()
     assert result.output_path.read_bytes() == b"real wav bytes"
     assert result.output_path.suffix == ".wav"
-    assert "eleven_multilingual_v2" in result.raw_response_summary
 
 
 def test_generate_sends_prompt_text_and_voice_id() -> None:
@@ -139,13 +155,53 @@ def test_generate_sends_prompt_text_and_voice_id() -> None:
     assert tts.calls[0]["voice_id"] == "voice-xyz"
 
 
-def test_generate_defaults_output_format_to_wav() -> None:
+def test_generate_defaults_output_format_to_creator_compatible_mp3() -> None:
+    """DEFAULT_OUTPUT_FORMAT changed from wav_44100 (Pro-tier only,
+    confirmed rejected with a real 403 subscription_required against a
+    Creator-tier account) to mp3_44100_128 (Creator-compatible)."""
     tts = _FakeTextToSpeech()
     provider = _provider(tts)
 
     provider.generate(_request())
 
+    assert tts.calls[0]["output_format"] == "mp3_44100_128"
+    assert provider.output_format == "mp3_44100_128"
+
+
+def test_output_format_env_var_overrides_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ELEVENLABS_OUTPUT_FORMAT", "wav_44100")
+    tts = _FakeTextToSpeech()
+    provider = ElevenLabsProvider(api_key="fake", client_factory=lambda api_key: _FakeClient(tts))
+
+    provider.generate(_request())
+
+    assert provider.output_format == "wav_44100"
     assert tts.calls[0]["output_format"] == "wav_44100"
+
+
+def test_output_format_constructor_argument_overrides_env_and_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ELEVENLABS_OUTPUT_FORMAT", "wav_44100")
+    tts = _FakeTextToSpeech()
+    provider = ElevenLabsProvider(
+        api_key="fake", output_format="mp3_44100_64", client_factory=lambda api_key: _FakeClient(tts)
+    )
+
+    provider.generate(_request())
+
+    assert provider.output_format == "mp3_44100_64"
+    assert tts.calls[0]["output_format"] == "mp3_44100_64"
+
+
+def test_generate_rejects_unsupported_output_format() -> None:
+    """Never silently mislabels an unrecognized format's bytes with the
+    wrong extension -- refuses outright instead."""
+    tts = _FakeTextToSpeech()
+    provider = _provider(tts, output_format="pcm_44100")
+
+    with pytest.raises(ProviderNotConfiguredError, match="pcm_44100"):
+        provider.generate(_request())
 
 
 def test_generate_builds_voice_settings_from_known_parameters() -> None:

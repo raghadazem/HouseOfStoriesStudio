@@ -371,6 +371,40 @@ def test_voice_line_workflow_direct_text_path_measures_real_duration(
     assert result.asset.duration_seconds == 1.0
 
 
+def _minimal_mp3_bytes(n_frames: int) -> bytes:
+    """A real, structurally-valid MPEG-1 Layer III CBR 128kbps/44100Hz
+    mono MP3 -- silent frame data, but genuinely tinytag-parseable
+    (verified against real tinytag output), so tests never depend on an
+    external encoder or a real ElevenLabs call."""
+    header = bytes([0xFF, 0xFB, 0x90, 0xC0])
+    frame_size = 417  # floor(144 * 128000 / 44100)
+    frame = header + bytes(frame_size - len(header))
+    return frame * n_frames
+
+
+def test_voice_line_workflow_measures_real_mp3_duration_via_tinytag(
+    session: Session, app_config: AppConfig, tmp_path
+) -> None:
+    """Milestone 9 Creator-tier compatibility fix: an .mp3 output file's
+    duration is measured via tinytag, exactly as authoritatively as the
+    .wav path measures via Python's wave module -- never invented."""
+    mp3_path = tmp_path / "elevenlabs_test.mp3"
+    mp3_path.write_bytes(_minimal_mp3_bytes(n_frames=10))
+
+    duration = VoiceLineWorkflow._measure_duration_seconds(mp3_path)
+
+    assert duration == pytest.approx(10 * (1152 / 44100))
+
+
+def test_voice_line_workflow_duration_none_for_unrecognized_extension(
+    tmp_path,
+) -> None:
+    other_path = tmp_path / "not_audio.txt"
+    other_path.write_bytes(b"not audio")
+
+    assert VoiceLineWorkflow._measure_duration_seconds(other_path) is None
+
+
 def test_voice_line_workflow_direct_text_path_sets_dialogue_line_id(
     session: Session, app_config: AppConfig
 ) -> None:

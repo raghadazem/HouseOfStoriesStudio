@@ -354,3 +354,71 @@ def test_profiles_summary_includes_bird_and_turtle_mother_with_approved_active_s
     assert "(approved)" in bird_status
     turtle_mother_status = next(text for text in rows_text if text.startswith("turtle_mother ("))
     assert "(approved)" in turtle_mother_status
+
+
+# --- MP3 playback (Milestone 9 Creator-tier compatibility fix) ---------------
+
+
+def test_audio_candidate_tile_plays_mp3_asset(
+    qtbot, gui_context: ApplicationContext, tmp_path
+) -> None:
+    """The existing audio review player must keep working for the new
+    default MP3 output, with no visual redesign: AudioCandidateTile /
+    QMediaPlayer resolve and accept a real .mp3 Asset's file exactly
+    like it already does for .wav -- format-agnostic by construction
+    (it only ever calls QUrl.fromLocalFile on the asset's own path)."""
+    from PySide6.QtCore import QUrl
+
+    from app.core.ai.generation_job_service import GenerationJobService
+    from app.core.db.enums import AssetType
+    from app.core.services.asset_import_service import ImportRequest
+    from app.gui.widgets import AudioCandidateTile
+
+    mp3_header = bytes([0xFF, 0xFB, 0x90, 0xC0])
+    frame_size = 417  # floor(144 * 128000 / 44100)
+    mp3_bytes = (mp3_header + bytes(frame_size - len(mp3_header))) * 5
+    source_path = tmp_path / "melissa_line.mp3"
+    source_path.write_bytes(mp3_bytes)
+
+    episode_id = _episode(gui_context)
+    with gui_context.session_scope() as session:
+        jobs = GenerationJobService()
+        job = jobs.create_job(
+            session, workflow_name="voice_line", provider_name="elevenlabs",
+            provider_model="eleven_multilingual_v2", batch_id=uuid.uuid4(),
+            prompt_text="مرحباً", episode_id=episode_id,
+        )
+        job = jobs.mark_running(session, job.id)
+        asset = gui_context.asset_import_service.import_asset(
+            session,
+            ImportRequest(
+                source_path=source_path, asset_type=AssetType.VOICE,
+                episode_id=episode_id, duration_seconds=5 * (1152 / 44100),
+                source_tool="elevenlabs",
+            ),
+        )
+        job = jobs.mark_succeeded(session, job.id, result_asset_id=asset.id)
+        job_id, asset_id = job.id, asset.id
+
+    with gui_context.open_session() as session:
+        from app.core.models import Asset, GenerationJob
+
+        job = session.get(GenerationJob, job_id)
+        asset = session.get(Asset, asset_id)
+        assert asset.relative_path.endswith(".mp3")
+
+        tile = AudioCandidateTile(
+            gui_context, job, asset,
+            on_approve=lambda _id: None, on_reject=lambda _id: None,
+            on_retry=lambda _id: None, on_cancel=lambda _id: None,
+        )
+        qtbot.addWidget(tile)
+
+        play_button = tile.findChildren(QPushButton)[0]
+        assert play_button.isEnabled()
+        play_button.click()
+
+        expected_url = QUrl.fromLocalFile(
+            str(gui_context.storage_service.resolve_managed_path(asset.relative_path))
+        )
+        assert tile._player.source() == expected_url

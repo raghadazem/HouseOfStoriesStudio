@@ -13,6 +13,21 @@ must carry a real ``voice_id`` (an ElevenLabs Voice Library voice id,
 chosen by a human when creating a ``VoiceProfile`` — see
 ``app.core.services.voice_profile_service``) — this provider has no
 code path that uploads reference audio to create a cloned voice.
+
+Output format (Milestone 9 compatibility fix, see
+``docs/33_MILESTONE_9_REAL_VOICE_PRODUCTION_STATUS.md`` §Output Format):
+``wav_44100`` -- this app's original WAV production master -- requires
+an ElevenLabs Pro-tier-or-above subscription; a Creator-tier account's
+``text_to_speech.convert()`` call is rejected with a 403
+(``subscription_required`` / ``output_format_not_allowed``), confirmed
+against the real API. ``DEFAULT_OUTPUT_FORMAT`` is therefore
+``mp3_44100_128`` (Creator-compatible), configurable via the
+``ELEVENLABS_OUTPUT_FORMAT`` environment variable using the exact same
+constructor-argument -> env var -> module-default resolution as
+``ENV_MODEL`` -- never a hardcoded subscription-tier assumption. The
+produced file's extension always truthfully matches the requested
+format (``_extension_for_output_format``) -- an MP3 is never named
+``.wav``.
 """
 
 from __future__ import annotations
@@ -41,12 +56,29 @@ from app.core.ai.provider_interface import AIProvider, GenerationRequest, Genera
 
 ENV_API_KEY = "ELEVENLABS_API_KEY"
 ENV_MODEL = "ELEVENLABS_VOICE_MODEL"
+ENV_OUTPUT_FORMAT = "ELEVENLABS_OUTPUT_FORMAT"
 DEFAULT_MODEL = "eleven_multilingual_v2"
 
-# WAV production master (Milestone 9 Decision 7) -- never MP3 by
-# default. Overridable via request.parameters["output_format"] only if
-# a future need arises; nothing in this codebase requests anything else.
-DEFAULT_OUTPUT_FORMAT = "wav_44100"
+# Creator-tier compatible (Milestone 9 compatibility fix -- wav_44100
+# requires ElevenLabs Pro-tier-or-above and is rejected outright on a
+# Creator-tier account). Configurable via ELEVENLABS_OUTPUT_FORMAT so
+# nothing here hardcodes a subscription-tier assumption; set it to
+# "wav_44100" to opt back into the original WAV master on a Pro-tier
+# account -- see _OUTPUT_FORMAT_EXTENSIONS for every format this
+# provider knows how to name honestly on disk.
+DEFAULT_OUTPUT_FORMAT = "mp3_44100_128"
+
+# The only output_format families this provider will ever write to
+# disk -- an explicit allowlist (not a MIME-type guess: audio
+# extension-from-MIME-type lookups are unreliable across platforms,
+# unlike GeminiProvider's image case) so a produced file's extension is
+# always literally true. Extending to another ElevenLabs format (e.g. a
+# future Opus/PCM need) means adding one entry here, never silently
+# reusing an existing extension for different bytes.
+_OUTPUT_FORMAT_EXTENSIONS: dict[str, str] = {
+    "wav": ".wav",
+    "mp3": ".mp3",
+}
 
 _VOICE_SETTINGS_KEYS = frozenset(
     {"stability", "similarity_boost", "style", "speed", "use_speaker_boost"}
@@ -68,6 +100,27 @@ ClientFactory = Callable[[str], ElevenLabs]
 
 def _default_client_factory(api_key: str) -> ElevenLabs:
     return ElevenLabs(api_key=api_key)
+
+
+def _extension_for_output_format(output_format: str) -> str:
+    """The real, honest file extension for one ElevenLabs ``output_format``
+    value -- never guessed, never defaulted to ``.wav`` for something
+    that isn't. Raises :class:`ProviderNotConfiguredError` for any
+    ``output_format`` this provider doesn't already know how to name
+    correctly (e.g. raw PCM, mu-law, Opus) rather than risk mislabeling
+    the bytes -- this is a configuration problem to fix, not something
+    to paper over with a guessed extension.
+    """
+    prefix = output_format.split("_", 1)[0]
+    try:
+        return _OUTPUT_FORMAT_EXTENSIONS[prefix]
+    except KeyError:
+        known = ", ".join(f"{p}_*" for p in sorted(_OUTPUT_FORMAT_EXTENSIONS))
+        raise ProviderNotConfiguredError(
+            f"ElevenLabsProvider does not know how to name output_format "
+            f"{output_format!r} on disk; expected one of: {known}. Set "
+            f"{ENV_OUTPUT_FORMAT} to a supported format."
+        ) from None
 
 
 def _sanitize_error_detail(body: object) -> str | None:
@@ -103,6 +156,7 @@ class ElevenLabsProvider(AIProvider):
         *,
         api_key: str | None = None,
         model: str | None = None,
+        output_format: str | None = None,
         client_factory: ClientFactory | None = None,
     ) -> None:
         """All arguments optional so ``PROVIDER_REGISTRY`` can build one
@@ -111,6 +165,11 @@ class ElevenLabsProvider(AIProvider):
         ``client_factory`` — never a real network call."""
         self._api_key = api_key if api_key is not None else os.environ.get(ENV_API_KEY)
         self._model = model if model is not None else os.environ.get(ENV_MODEL, DEFAULT_MODEL)
+        self._output_format = (
+            output_format
+            if output_format is not None
+            else os.environ.get(ENV_OUTPUT_FORMAT, DEFAULT_OUTPUT_FORMAT)
+        )
         self._client_factory = client_factory or _default_client_factory
         self._client: ElevenLabs | None = None
 
@@ -118,6 +177,11 @@ class ElevenLabsProvider(AIProvider):
     def model(self) -> str:
         """The configured model identifier this instance will call."""
         return self._model
+
+    @property
+    def output_format(self) -> str:
+        """The configured ElevenLabs output_format this instance will request."""
+        return self._output_format
 
     def is_configured(self) -> bool:
         return bool(self._api_key)
@@ -144,7 +208,7 @@ class ElevenLabsProvider(AIProvider):
 
         client = self._get_client()
         voice_settings = self._build_voice_settings(request.parameters)
-        output_format = request.parameters.get("output_format", DEFAULT_OUTPUT_FORMAT)
+        output_format = request.parameters.get("output_format", self._output_format)
 
         try:
             chunks = client.text_to_speech.convert(
@@ -165,11 +229,11 @@ class ElevenLabsProvider(AIProvider):
         if not audio_bytes:
             raise ProviderMalformedResponseError("ElevenLabs returned no audio data.")
 
-        output_path = self._write_temp_file(audio_bytes)
+        output_path = self._write_temp_file(audio_bytes, output_format)
         return GenerationResult(
             output_path=output_path,
             provider_name=self.name,
-            raw_response_summary=f"elevenlabs voice generation via {self._model}",
+            raw_response_summary=f"elevenlabs voice generation via {self._model} ({output_format})",
         )
 
     def _get_client(self) -> ElevenLabs:
@@ -202,9 +266,10 @@ class ElevenLabsProvider(AIProvider):
         return ProviderRequestError(f"ElevenLabs rejected the request ({err.status_code}): {err.body}")
 
     @staticmethod
-    def _write_temp_file(audio_bytes: bytes) -> Path:
+    def _write_temp_file(audio_bytes: bytes, output_format: str) -> Path:
+        extension = _extension_for_output_format(output_format)
         temp_dir = Path(tempfile.gettempdir()) / "house_of_stories_elevenlabs_provider"
         temp_dir.mkdir(parents=True, exist_ok=True)
-        output_path = temp_dir / f"elevenlabs_{uuid.uuid4().hex}.wav"
+        output_path = temp_dir / f"elevenlabs_{uuid.uuid4().hex}{extension}"
         output_path.write_bytes(audio_bytes)
         return output_path

@@ -633,6 +633,12 @@ def run_voice_line_batch(
 
     voice_parameters: dict[str, object] = {"voice_id": profile.provider_voice_id}
     voice_parameters.update(profile.default_parameters)
+    # The exact output_format that will actually be requested (a
+    # VoiceProfile-level override, if ever set, wins; otherwise the
+    # provider's own configured default) -- this is the single value
+    # both sent to the provider and snapshotted for provenance below,
+    # so the two can never disagree.
+    voice_parameters.setdefault("output_format", getattr(provider, "output_format", None))
 
     if request.retry_of_job_id is not None:
         batch_id = generation_jobs.get_job(session, request.retry_of_job_id).batch_id
