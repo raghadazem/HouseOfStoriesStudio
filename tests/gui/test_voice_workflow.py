@@ -141,9 +141,70 @@ def test_panel_shows_song_scene_line_with_song_badge_and_no_generate_button(
     assert any("Song" in text for text in labels)
     assert not any("Blocked" in text for text in labels)
     assert not any(text.strip() == "Ready" for text in labels)
-    assert any("0/0 ready" in text for text in labels)
+    assert any("0/0 to generate" in text for text in labels)
     buttons = {btn.text(): btn for btn in panel.findChildren(QPushButton)}
     assert "Generate" not in buttons
+
+
+# --- Generate Missing / candidate reuse (Milestone 9 production-safety) -----
+
+
+def test_episode_summary_row_reflects_live_counts_before_generation(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    episode_id = _episode(gui_context)
+    _ready_character_voice(gui_context, "melissa", "ميليسا", "Melissa")
+    _scene(gui_context, episode_id, "ميليسا: مرحباً")
+
+    panel = vw.VoiceWorkspacePanel(gui_context, theme)
+    qtbot.addWidget(panel)
+    panel.refresh(episode_id)
+
+    labels = [label.text() for label in panel.findChildren(QLabel)]
+    assert any(text == "1 spoken" for text in labels)
+    assert any(text == "0 reusable" for text in labels)
+    assert any(text == "1 need generation" for text in labels)
+    assert any(text == "0 blocked" for text in labels)
+    buttons = {btn.text(): btn for btn in panel.findChildren(QPushButton)}
+    assert buttons["Generate Missing"].isEnabled() is True
+
+
+def test_panel_shows_current_candidate_badge_and_disables_generate_missing_after_success(
+    qtbot, gui_context: ApplicationContext, theme: ThemeManager
+) -> None:
+    """Zero missing lines after one successful generation -- re-clicking
+    Generate Missing must be impossible (button disabled), proving the
+    idempotent-resume requirement at the UI layer: the system itself
+    rediscovers an already-generated line as current, no manual
+    bookkeeping required. The per-line Generate button (intentional
+    regeneration) must stay available regardless."""
+    episode_id = _episode(gui_context)
+    _ready_character_voice(gui_context, "melissa", "ميليسا", "Melissa")
+    scene_id = _scene(gui_context, episode_id, "ميليسا: مرحباً")
+    with gui_context.session_scope() as session:
+        line_id = gui_context.scene_service.sync_dialogue_lines(session, scene_id)[0].id
+
+    request = vw.VoiceLineBatchRequest(
+        provider_name="mock_provider", dialogue_line_id=line_id, episode_id=episode_id, candidate_count=1
+    )
+    dialog = vw._VoiceCandidateReviewDialog(gui_context, theme, line_id, request)
+    qtbot.addWidget(dialog)
+    with qtbot.waitSignal(dialog._worker.batch_finished, timeout=5000):
+        pass
+
+    panel = vw.VoiceWorkspacePanel(gui_context, theme)
+    qtbot.addWidget(panel)
+    panel.refresh(episode_id)
+
+    labels = [label.text() for label in panel.findChildren(QLabel)]
+    assert any("Current Candidate" in text for text in labels)
+    assert any("0/1 to generate" in text for text in labels)
+    assert any(text == "1 reusable" for text in labels)
+    assert any(text == "0 need generation" for text in labels)
+
+    buttons = {btn.text(): btn for btn in panel.findChildren(QPushButton)}
+    assert buttons["Generate Missing"].isEnabled() is False
+    assert buttons["Generate"].isEnabled() is True  # intentional regeneration stays available
 
 
 # --- generate dialog ---------------------------------------------------------

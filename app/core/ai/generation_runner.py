@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.core.ai.exceptions import ProviderNotConfiguredError
 from app.core.ai.generation_job_service import GenerationJobService
+from app.core.ai.line_performance_overrides import get_line_performance_override
 from app.core.ai.orchestrator import AIOrchestrator
 from app.core.ai.prompt_engine import PromptEngine
 from app.core.ai.providers.gemini_provider import DEFAULT_IMAGE_SIZE
@@ -631,6 +632,23 @@ def run_voice_line_batch(
     normalized_text = normalize_arabic_line(line.authored_text, pronunciation_overrides=override_map)
     applied_terms = sorted(term for term in override_map if term in line.authored_text)
 
+    # A founder-approved, line-specific performance exception (e.g. the
+    # Tortor Scene 7 laugh cue) -- see line_performance_overrides'
+    # module docstring for why this lives here rather than as a
+    # PronunciationOverride or a provider-level special case.
+    # authored_text/normalize_arabic_line's own output above are both
+    # left untouched by this; only what actually gets sent downstream
+    # changes.
+    performance_override = get_line_performance_override(request.dialogue_line_id)
+    if performance_override is not None:
+        normalized_text = performance_override.provider_bound_text
+        # The dedicated GenerationJob.provider_model column (not just
+        # parameters["model_id"]) must also reflect what was actually
+        # sent -- otherwise this job's own provenance column would
+        # misleadingly read "eleven_multilingual_v2" for a line that
+        # was really generated with eleven_v3.
+        provider_model = performance_override.model_id
+
     voice_parameters: dict[str, object] = {"voice_id": profile.provider_voice_id}
     voice_parameters.update(profile.default_parameters)
     # The exact output_format that will actually be requested (a
@@ -639,6 +657,9 @@ def run_voice_line_batch(
     # both sent to the provider and snapshotted for provenance below,
     # so the two can never disagree.
     voice_parameters.setdefault("output_format", getattr(provider, "output_format", None))
+    if performance_override is not None:
+        voice_parameters["model_id"] = performance_override.model_id
+        voice_parameters["performance_override_reason"] = performance_override.reason
 
     if request.retry_of_job_id is not None:
         batch_id = generation_jobs.get_job(session, request.retry_of_job_id).batch_id

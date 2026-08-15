@@ -392,6 +392,123 @@ def test_run_batch_produces_valid_draft_mp3_asset_with_measured_duration(
     assert asset.duration_seconds == pytest.approx(10 * (1152 / 44100))
 
 
+# --- line performance overrides (Milestone 9 production-safety checkpoint) --
+
+
+def test_run_batch_applies_a_registered_line_performance_override(
+    session: Session, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A generic exercise of the override mechanism itself (not the
+    real Tortor line) -- proves run_voice_line_batch consults the
+    registry, substitutes both the provider-bound text and the
+    effective model_id, leaves authored_text/normalize_arabic_line's
+    own output alone, and snapshots the true effective model onto the
+    dedicated GenerationJob.provider_model column (not just
+    parameters["model_id"])."""
+    from app.core.ai import line_performance_overrides as overrides_module
+
+    episode, line = _ready_line(session, dialogue_ar="ميليسا: نص عادي")
+    override = overrides_module.LinePerformanceOverride(
+        model_id="eleven_v3",
+        provider_bound_text="[laughs] نص مختلف تماماً",
+        reason="test override",
+    )
+    monkeypatch.setitem(overrides_module.LINE_PERFORMANCE_OVERRIDES, line.id, override)
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(provider_name="mock_provider", dialogue_line_id=line.id, episode_id=episode.id),
+        orchestrator=_orchestrator(app_config),
+        generation_jobs=GenerationJobService(),
+    )
+
+    job = result[0]
+    assert job.parameters["authored_text"] == "نص عادي"  # authored_text never touched
+    assert job.parameters["normalized_text_sent"] == "[laughs] نص مختلف تماماً"
+    assert job.prompt_text == "[laughs] نص مختلف تماماً"
+    assert job.parameters["model_id"] == "eleven_v3"
+    assert job.provider_model == "eleven_v3"  # dedicated column, not just parameters
+    assert job.parameters["voice_id"] == "voice-melissa"  # voice identity unaffected
+
+
+def test_run_batch_ordinary_line_has_no_performance_override_applied(
+    session: Session, app_config: AppConfig
+) -> None:
+    """A line with no registry entry -- including one that happens to
+    contain هاها-like text -- must generate completely normally: no
+    model_id override, no text substitution."""
+    episode, line = _ready_line(session, dialogue_ar="ميليسا: هاها! يا لها من مزحة")
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(provider_name="mock_provider", dialogue_line_id=line.id, episode_id=episode.id),
+        orchestrator=_orchestrator(app_config),
+        generation_jobs=GenerationJobService(),
+    )
+
+    job = result[0]
+    assert job.parameters["normalized_text_sent"] == "هاها! يا لها من مزحة"
+    assert "model_id" not in job.parameters
+    assert job.provider_model is None  # mock_provider has no .model attribute
+
+
+def test_run_batch_real_tortor_scene7_line_id_resolves_to_v3_laugh_cue(
+    session: Session, app_config: AppConfig
+) -> None:
+    """End-to-end proof using the REAL production line id (not a
+    synthetic one): if a DialogueLine ever exists with this exact id,
+    run_voice_line_batch automatically sends eleven_v3 + [laughs] --
+    no manual script, no founder/Claude needing to remember anything."""
+    from app.core.ai.line_performance_overrides import TORTOR_SCENE7_LAUGH_LINE_ID
+    from app.core.models import Character, DialogueLine
+
+    ss = SceneService()
+    vps = VoiceProfileService()
+    approvals = ApprovalService()
+    character = Character(slug="tortor", name_ar="طُرطُر", name_en="Tortor")
+    session.add(character)
+    session.flush()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="طُرطُر: هاها! دبدوبك يحب اللعب في العشب!")
+    character_id, speaker_key = ss.resolve_speaker(session, "طُرطُر")
+    # The id column has a Python-side uuid4 default, freely overridable
+    # -- constructed directly (rather than via sync_dialogue_lines) so
+    # this test can exercise the exact real production line id.
+    line = DialogueLine(
+        id=TORTOR_SCENE7_LAUGH_LINE_ID,
+        scene_id=scene.id,
+        order_index=0,
+        speaker_raw="طُرطُر",
+        character_id=character_id,
+        speaker_key=speaker_key,
+        authored_text="هاها! دبدوبك يحب اللعب في العشب!",
+        is_current=True,
+    )
+    session.add(line)
+    session.flush()
+    profile = vps.create_voice_profile(
+        session, character_id=character.id, display_name="Tortor",
+        provider_name="mock_provider", provider_voice_id="rFDdsCQRZCUL8cPOWtnP",
+    )
+    vps.set_active_voice_profile(session, profile.id)
+    approvals.approve_entity(session, "voice_profile", profile.id, decided_by="founder")
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(
+            provider_name="mock_provider", dialogue_line_id=TORTOR_SCENE7_LAUGH_LINE_ID, episode_id=episode.id
+        ),
+        orchestrator=_orchestrator(app_config),
+        generation_jobs=GenerationJobService(),
+    )
+
+    job = result[0]
+    assert job.parameters["authored_text"] == "هاها! دبدوبك يحب اللعب في العشب!"
+    assert job.parameters["normalized_text_sent"] == "[laughs] دبدوبك يحب اللعب في العشب!"
+    assert job.parameters["model_id"] == "eleven_v3"
+    assert job.parameters["voice_id"] == "rFDdsCQRZCUL8cPOWtnP"
+
+
 def test_run_batch_threads_retry_of_job_id_onto_the_new_job(
     session: Session, app_config: AppConfig
 ) -> None:
