@@ -187,6 +187,17 @@ class ElevenLabsProvider(AIProvider):
         return bool(self._api_key)
 
     def generate(self, request: GenerationRequest) -> GenerationResult:
+        """Generate one voice-line clip.
+
+        ``model_id`` resolution mirrors ``output_format``'s existing
+        precedence: ``request.parameters["model_id"]`` (a one-off,
+        per-call override — e.g. a non-verbal performance cue that
+        needs a different model than this line's normal casting) wins
+        over this instance's configured ``self._model`` (constructor
+        argument -> ``ELEVENLABS_VOICE_MODEL`` env var -> DEFAULT_MODEL).
+        Ordinary jobs never set ``model_id`` in parameters, so they are
+        unaffected and keep using the configured default.
+        """
         if request.modality not in self.supported_modalities:
             raise ValueError(f"ElevenLabsProvider does not support modality {request.modality!r}.")
         if not self.is_configured():
@@ -209,12 +220,13 @@ class ElevenLabsProvider(AIProvider):
         client = self._get_client()
         voice_settings = self._build_voice_settings(request.parameters)
         output_format = request.parameters.get("output_format", self._output_format)
+        model_id = request.parameters.get("model_id", self._model)
 
         try:
             chunks = client.text_to_speech.convert(
                 voice_id,
                 text=request.prompt_text,
-                model_id=self._model,
+                model_id=model_id,
                 output_format=output_format,
                 voice_settings=voice_settings,
             )
@@ -233,7 +245,7 @@ class ElevenLabsProvider(AIProvider):
         return GenerationResult(
             output_path=output_path,
             provider_name=self.name,
-            raw_response_summary=f"elevenlabs voice generation via {self._model} ({output_format})",
+            raw_response_summary=f"elevenlabs voice generation via {model_id} ({output_format})",
         )
 
     def _get_client(self) -> ElevenLabs:

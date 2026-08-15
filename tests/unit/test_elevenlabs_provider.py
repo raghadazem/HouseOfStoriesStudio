@@ -204,6 +204,71 @@ def test_generate_rejects_unsupported_output_format() -> None:
         provider.generate(_request())
 
 
+def test_generate_uses_configured_model_when_no_request_override() -> None:
+    """Ordinary jobs never set parameters["model_id"] -- they must keep
+    using the provider's configured model (constructor/env/default),
+    exactly as before this change."""
+    tts = _FakeTextToSpeech()
+    provider = _provider(tts, model="eleven_multilingual_v2")
+
+    provider.generate(_request())
+
+    assert tts.calls[0]["model_id"] == "eleven_multilingual_v2"
+    assert provider.model == "eleven_multilingual_v2"
+
+
+def test_generate_model_id_parameter_overrides_configured_model() -> None:
+    """A one-off performance-cue call (e.g. the Tortor laugh test) can
+    request a different model than this provider instance's configured
+    default without mutating that default."""
+    tts = _FakeTextToSpeech()
+    provider = _provider(tts, model="eleven_multilingual_v2")
+
+    provider.generate(
+        _request(parameters={"voice_id": "voice-abc", "model_id": "eleven_v3"})
+    )
+
+    assert tts.calls[0]["model_id"] == "eleven_v3"
+    # The provider's own configured default is untouched -- this was a
+    # per-call override, not a global model change.
+    assert provider.model == "eleven_multilingual_v2"
+
+
+def test_generate_model_id_override_does_not_affect_voice_id_or_output_format() -> None:
+    """Overriding model_id must not disturb the independent voice_id/
+    output_format resolution -- Tortor's voice_id stays the same voice,
+    only the synthesis engine changes."""
+    tts = _FakeTextToSpeech()
+    provider = _provider(tts)
+
+    provider.generate(
+        _request(
+            parameters={
+                "voice_id": "rFDdsCQRZCUL8cPOWtnP",
+                "model_id": "eleven_v3",
+                "output_format": "mp3_44100_128",
+            }
+        )
+    )
+
+    call = tts.calls[0]
+    assert call["model_id"] == "eleven_v3"
+    assert call["voice_id"] == "rFDdsCQRZCUL8cPOWtnP"
+    assert call["output_format"] == "mp3_44100_128"
+
+
+def test_generate_raw_response_summary_reflects_effective_model_id() -> None:
+    tts = _FakeTextToSpeech()
+    provider = _provider(tts, model="eleven_multilingual_v2")
+
+    result = provider.generate(
+        _request(parameters={"voice_id": "voice-abc", "model_id": "eleven_v3"})
+    )
+
+    assert "eleven_v3" in result.raw_response_summary
+    assert "eleven_multilingual_v2" not in result.raw_response_summary
+
+
 def test_generate_builds_voice_settings_from_known_parameters() -> None:
     tts = _FakeTextToSpeech()
     provider = _provider(tts)

@@ -427,6 +427,39 @@ def test_voice_line_workflow_direct_text_path_sets_dialogue_line_id(
     assert result.asset.dialogue_line_id == line.id
 
 
+def test_voice_line_workflow_forwards_model_id_override_unchanged(
+    session: Session, app_config: AppConfig
+) -> None:
+    """A per-line performance-cue model override (e.g. eleven_v3 for a
+    laugh cue) placed in ctx.parameters must reach
+    GenerationRequest.parameters verbatim -- the workflow must not
+    strip, rename, or otherwise touch it. This is what makes the
+    override's provenance trustworthy: GenerationJob.parameters is this
+    same dict, persisted as-is."""
+    episode = _episode(session)
+    workflow = VoiceLineWorkflow(asset_import=_asset_import(app_config))
+    ctx = WorkflowContext(
+        session=session,
+        provider=MockProvider(),
+        episode_id=episode.id,
+        rendered_prompt_text="[laughs] دبدوبك يحب اللعب في العشب!",
+        parameters={
+            "voice_id": "rFDdsCQRZCUL8cPOWtnP",
+            "model_id": "eleven_v3",
+            "output_format": "mp3_44100_128",
+            "authored_text": "هاها! دبدوبك يحب اللعب في العشب!",
+            "normalized_text_sent": "[laughs] دبدوبك يحب اللعب في العشب!",
+        },
+    )
+
+    result = workflow.run(ctx)
+
+    assert result.generation_request.parameters["model_id"] == "eleven_v3"
+    assert result.generation_request.parameters["voice_id"] == "rFDdsCQRZCUL8cPOWtnP"
+    assert result.generation_request.parameters["authored_text"] == "هاها! دبدوبك يحب اللعب في العشب!"
+    assert result.generation_request.prompt_text == "[laughs] دبدوبك يحب اللعب في العشب!"
+
+
 def test_voice_line_workflow_legacy_template_path_still_works(
     session: Session, app_config: AppConfig
 ) -> None:
