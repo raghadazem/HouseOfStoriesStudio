@@ -125,6 +125,31 @@ def test_editing_line_text_supersedes_old_line_not_reattached(session: Session) 
     assert new_b.id != b.id
 
 
+def test_editing_line_text_does_not_carry_reviewed_tts_text_to_new_row(session: Session) -> None:
+    """A human-reviewed vocalization (DialogueLine.reviewed_tts_text) is
+    tied to one exact authored_text revision -- editing the line's
+    words must retire the old row (reviewed_tts_text preserved there,
+    as honest history) and create a brand-new row that starts NULL,
+    never silently inheriting a vocalization reviewed for different
+    words."""
+    ss = SceneService()
+    episode = _episode(session)
+    scene = ss.add_scene(session, episode.id, dialogue_ar="ميليسا: A\nبيلسان: B\nتورتور: C")
+    _a, b, _c = ss.sync_dialogue_lines(session, scene.id)
+    b.reviewed_tts_text = "بِي"
+    session.flush()
+
+    ss.update_scene(session, scene.id, dialogue_ar="ميليسا: A\nبيلسان: B, fixed\nتورتور: C")
+    result = _current(session, scene.id)
+
+    session.refresh(b)
+    assert b.reviewed_tts_text == "بِي"  # untouched on the superseded row
+
+    new_b = next(line for line in result if line.authored_text == "B, fixed")
+    assert new_b.id != b.id
+    assert new_b.reviewed_tts_text is None
+
+
 def test_duplicate_identical_lines_do_not_collapse(session: Session) -> None:
     ss = SceneService()
     episode = _episode(session)

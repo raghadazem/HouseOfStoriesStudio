@@ -32,6 +32,16 @@ an APPROVED, or a ``final_line_voice`` candidate are all equally
 :class:`~app.core.services.scene_service.SceneService.set_line_final_take`
 governs which candidate becomes the line's actual final take, a
 completely separate human decision this service has no opinion on.
+
+The expected text this service computes for an ordinary line honors
+``DialogueLine.reviewed_tts_text`` when a human has recorded one (a
+fully/appropriately vocalized rendering for pronunciation-safe TTS),
+falling back to plain ``authored_text`` otherwise — the exact same
+precedence :func:`app.core.ai.generation_runner.run_voice_line_batch`
+uses, so a review that changes a line's effective vocalization
+correctly makes its old candidate stop matching (forcing regeneration)
+while a line whose vocalization hasn't changed keeps its existing
+candidate reusable.
 """
 
 from __future__ import annotations
@@ -43,7 +53,10 @@ from sqlalchemy.orm import Session
 
 from app.config import AppConfig, get_config
 from app.core.ai.generation_job_service import GenerationJobService
-from app.core.ai.line_performance_overrides import get_line_performance_override
+from app.core.ai.line_performance_overrides import (
+    LinePerformanceOverride,
+    get_line_performance_override,
+)
 from app.core.ai.orchestrator import AIOrchestrator
 from app.core.ai.text_normalization import normalize_arabic_line
 from app.core.db.enums import GenerationJobStatus
@@ -56,7 +69,10 @@ from app.core.services.voice_profile_service import VoiceProfileService
 @dataclass(frozen=True)
 class LineCandidateReport:
     """Whether ``dialogue_line_id`` already has a current, reusable
-    production candidate, and what production would send if it didn't."""
+    production candidate, and what production would send if it didn't
+    -- a complete pre-generation preview (Milestone 9: "no paid
+    generation should be necessary to discover what text will actually
+    be sent"), so a caller never needs to guess by reading job history."""
 
     dialogue_line_id: uuid.UUID
     has_current_candidate: bool
@@ -65,6 +81,14 @@ class LineCandidateReport:
     expected_model_id: str | None
     expected_output_format: str | None
     expected_normalized_text_sent: str | None
+    # Which PronunciationOverride terms actually fired in producing
+    # expected_normalized_text_sent -- empty whenever a
+    # LinePerformanceOverride is active (it replaces the text outright,
+    # so no override table lookup ever runs).
+    expected_pronunciation_overrides_applied: list[str]
+    # The LinePerformanceOverride this line resolves to, if any -- None
+    # for every ordinary line.
+    performance_override: LinePerformanceOverride | None
 
 
 class VoiceProductionCandidateService:
@@ -106,6 +130,7 @@ class VoiceProductionCandidateService:
         expected_output_format = getattr(provider, "output_format", None)
 
         performance_override = get_line_performance_override(dialogue_line_id)
+        expected_applied: list[str] = []
         if performance_override is not None:
             expected_model_id: str | None = performance_override.model_id
             expected_text = performance_override.provider_bound_text
@@ -114,7 +139,9 @@ class VoiceProductionCandidateService:
             override_map = {
                 o.term: o.replacement for o in self._pronunciation_overrides.list_overrides(session)
             }
-            expected_text = normalize_arabic_line(line.authored_text, pronunciation_overrides=override_map)
+            base_text = line.reviewed_tts_text if line.reviewed_tts_text is not None else line.authored_text
+            expected_text = normalize_arabic_line(base_text, pronunciation_overrides=override_map)
+            expected_applied = sorted(term for term in override_map if term in base_text)
 
         current_asset_id: uuid.UUID | None = None
         if expected_voice_id is not None:
@@ -149,4 +176,6 @@ class VoiceProductionCandidateService:
             expected_model_id=expected_model_id,
             expected_output_format=expected_output_format,
             expected_normalized_text_sent=expected_text,
+            expected_pronunciation_overrides_applied=expected_applied,
+            performance_override=performance_override,
         )

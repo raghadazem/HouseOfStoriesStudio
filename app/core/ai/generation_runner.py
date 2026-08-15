@@ -581,12 +581,16 @@ def run_voice_line_batch(
        is configured, no already-in-flight job for this exact line) --
        raises ValidationError naming every blocking reason if not.
 
-    Text normalization (Milestone 9 Decisions 4/9): the line's
-    authored_text is never modified. The exact text sent to the
-    provider is computed once, here, via
+    Text normalization (Milestone 9 Decisions 4/9, extended for
+    reviewed vocalization): the line's authored_text is never
+    modified. The exact text sent to the provider is computed once,
+    here: starting from DialogueLine.reviewed_tts_text if a human has
+    reviewed a fully/appropriately vocalized rendering for this exact
+    row, otherwise authored_text itself; either way passed through
     app.core.ai.text_normalization.normalize_arabic_line using the
-    currently-configured global PronunciationOverride rows, and
-    snapshotted immutably onto every job's
+    currently-configured global PronunciationOverride rows; then a
+    registered LinePerformanceOverride (if any) takes final precedence
+    over all of the above. Snapshotted immutably onto every job's
     parameters["normalized_text_sent"] alongside the untouched
     authored_text -- both stay inspectable later, never conflated.
 
@@ -629,8 +633,15 @@ def run_voice_line_batch(
     )
     overrides_service = pronunciation_overrides or PronunciationOverrideService()
     override_map = {o.term: o.replacement for o in overrides_service.list_overrides(session)}
-    normalized_text = normalize_arabic_line(line.authored_text, pronunciation_overrides=override_map)
-    applied_terms = sorted(term for term in override_map if term in line.authored_text)
+    # The base text before pronunciation-override substitution: a
+    # human-reviewed, fully/appropriately vocalized rendering if one
+    # has been recorded for this exact DialogueLine row (see its
+    # reviewed_tts_text column docstring), otherwise authored_text
+    # itself -- either way still passed through the same override
+    # table, and authored_text is never read for writing.
+    base_text = line.reviewed_tts_text if line.reviewed_tts_text is not None else line.authored_text
+    normalized_text = normalize_arabic_line(base_text, pronunciation_overrides=override_map)
+    applied_terms = sorted(term for term in override_map if term in base_text)
 
     # A founder-approved, line-specific performance exception (e.g. the
     # Tortor Scene 7 laugh cue) -- see line_performance_overrides'

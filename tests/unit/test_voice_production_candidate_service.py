@@ -499,3 +499,69 @@ def test_pronunciation_override_participates_in_expected_text(
     )
 
     assert report.expected_normalized_text_sent == "يا بَيْلَسان"
+
+
+# --- reviewed_tts_text (human-reviewed vocalization) idempotency -------------
+
+
+def test_reviewed_tts_text_change_invalidates_old_candidate(
+    session: Session, app_config: AppConfig, tmp_path
+) -> None:
+    """A line's existing candidate was generated from the old
+    (unreviewed) text. Recording a reviewed_tts_text changes the
+    effective provider-bound text, so the old candidate must no longer
+    count as current -- Generate Missing must pick this line up again."""
+    _episode, line = _ready_line(session)
+    _job_with_asset(
+        session, app_config, tmp_path, line,
+        voice_id="voice-current", normalized_text_sent="مرحباً",
+    )
+    service = VoiceProductionCandidateService(config=app_config)
+    before = service.evaluate_line(session, line.id, provider_name="fake_candidate_provider", orchestrator=_orchestrator())
+    assert before.has_current_candidate is True
+
+    line.reviewed_tts_text = "مَرْحَبًا"
+    session.flush()
+
+    after = service.evaluate_line(session, line.id, provider_name="fake_candidate_provider", orchestrator=_orchestrator())
+    assert after.has_current_candidate is False
+    assert after.expected_normalized_text_sent == "مَرْحَبًا"
+
+
+def test_reviewed_tts_text_unchanged_preserves_candidate_reuse(
+    session: Session, app_config: AppConfig, tmp_path
+) -> None:
+    """A candidate generated FROM a reviewed_tts_text (matching it
+    exactly) must still be recognized as current -- reviewing a line's
+    vocalization once, then re-running selection, must not force an
+    unnecessary regeneration."""
+    _episode, line = _ready_line(session)
+    line.reviewed_tts_text = "مَرْحَبًا"
+    session.flush()
+    _job_with_asset(
+        session, app_config, tmp_path, line,
+        voice_id="voice-current", normalized_text_sent="مَرْحَبًا",
+    )
+    service = VoiceProductionCandidateService(config=app_config)
+
+    report = service.evaluate_line(session, line.id, provider_name="fake_candidate_provider", orchestrator=_orchestrator())
+
+    assert report.has_current_candidate is True
+
+
+def test_line_candidate_report_exposes_overrides_and_performance_preview(
+    session: Session, app_config: AppConfig
+) -> None:
+    """The report is a complete pre-generation preview -- no paid call
+    is needed to discover which overrides fired or whether a
+    performance override applies."""
+    from app.core.services.pronunciation_override_service import PronunciationOverrideService
+
+    _episode, line = _ready_line(session, dialogue_ar="ميليسا: يا بيلسان")
+    PronunciationOverrideService().create_override(session, term="بيلسان", replacement="بَيْلَسان")
+    service = VoiceProductionCandidateService(config=app_config)
+
+    report = service.evaluate_line(session, line.id, provider_name="fake_candidate_provider", orchestrator=_orchestrator())
+
+    assert report.expected_pronunciation_overrides_applied == ["بيلسان"]
+    assert report.performance_override is None

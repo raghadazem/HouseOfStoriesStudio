@@ -56,6 +56,23 @@ class DialogueLine(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Copied verbatim from the parse -- never independently editable.
     authored_text: Mapped[str] = mapped_column(Text, nullable=False)
 
+    # A human-reviewed, fully/appropriately vocalized (diacritized)
+    # rendering of authored_text for TTS purposes only -- NULL until a
+    # human has actually reviewed this exact row's pronunciation.
+    # Never auto-derived (no LLM/heuristic writes this), never fed back
+    # into authored_text, and inherently tied to one authored_text
+    # revision: editing dialogue_ar retires this row (is_current=False)
+    # and creates a brand-new row with this column NULL again, so a
+    # stale vocalization can never silently survive a script edit. When
+    # set, VoiceLineWorkflow-bound generation (run_voice_line_batch) and
+    # VoiceProductionCandidateService use it as the base text instead of
+    # normalize_arabic_line(authored_text) -- see
+    # docs/33_MILESTONE_9_REAL_VOICE_PRODUCTION_STATUS.md. A registered
+    # LinePerformanceOverride (e.g. Tortor's Scene 7 laugh cue) still
+    # takes precedence over this, since that's a performance
+    # substitution, not a pronunciation refinement.
+    reviewed_tts_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     # False once superseded by a later dialogue_ar edit. Never deleted,
     # so every GenerationJob/Asset that pointed at this row stays valid
     # history -- see the module docstring.

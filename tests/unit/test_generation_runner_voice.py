@@ -452,6 +452,81 @@ def test_run_batch_ordinary_line_has_no_performance_override_applied(
     assert job.provider_model is None  # mock_provider has no .model attribute
 
 
+def test_run_batch_uses_reviewed_tts_text_as_base_when_present(
+    session: Session, app_config: AppConfig
+) -> None:
+    """A human-reviewed, fully/appropriately vocalized rendering
+    (DialogueLine.reviewed_tts_text) becomes the base text sent to the
+    provider instead of plain authored_text -- authored_text itself is
+    never touched, in the DB or in provenance."""
+    episode, line = _ready_line(session, dialogue_ar="ميليسا: نص عادي")
+    line.reviewed_tts_text = "نَصٌّ عَادِيٌّ"
+    session.flush()
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(provider_name="mock_provider", dialogue_line_id=line.id, episode_id=episode.id),
+        orchestrator=_orchestrator(app_config),
+        generation_jobs=GenerationJobService(),
+    )
+
+    job = result[0]
+    assert job.parameters["authored_text"] == "نص عادي"
+    assert job.parameters["normalized_text_sent"] == "نَصٌّ عَادِيٌّ"
+    assert job.prompt_text == "نَصٌّ عَادِيٌّ"
+    assert line.authored_text == "نص عادي"  # never overwritten
+
+
+def test_run_batch_applies_pronunciation_overrides_on_top_of_reviewed_tts_text(
+    session: Session, app_config: AppConfig
+) -> None:
+    from app.core.services.pronunciation_override_service import PronunciationOverrideService
+
+    episode, line = _ready_line(session, dialogue_ar="ميليسا: نص عادي")
+    PronunciationOverrideService().create_override(session, term="نص", replacement="نَصّ")
+    line.reviewed_tts_text = "هذا نص تجريبي"
+    session.flush()
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(provider_name="mock_provider", dialogue_line_id=line.id, episode_id=episode.id),
+        orchestrator=_orchestrator(app_config),
+        generation_jobs=GenerationJobService(),
+    )
+
+    job = result[0]
+    assert job.parameters["normalized_text_sent"] == "هذا نَصّ تجريبي"
+    assert job.parameters["pronunciation_overrides_applied"] == ["نص"]
+
+
+def test_run_batch_line_performance_override_takes_precedence_over_reviewed_tts_text(
+    session: Session, app_config: AppConfig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """LinePerformanceOverride (e.g. Tortor's Scene 7 laugh cue) is a
+    performance substitution, not a pronunciation refinement -- it must
+    win outright over any reviewed_tts_text, never be merged with it."""
+    from app.core.ai import line_performance_overrides as overrides_module
+
+    episode, line = _ready_line(session, dialogue_ar="ميليسا: نص عادي")
+    line.reviewed_tts_text = "نَصٌّ مُرَاجَعٌ"
+    session.flush()
+    override = overrides_module.LinePerformanceOverride(
+        model_id="eleven_v3", provider_bound_text="[laughs] نص أداء", reason="test",
+    )
+    monkeypatch.setitem(overrides_module.LINE_PERFORMANCE_OVERRIDES, line.id, override)
+
+    result = run_voice_line_batch(
+        session,
+        VoiceLineBatchRequest(provider_name="mock_provider", dialogue_line_id=line.id, episode_id=episode.id),
+        orchestrator=_orchestrator(app_config),
+        generation_jobs=GenerationJobService(),
+    )
+
+    job = result[0]
+    assert job.parameters["normalized_text_sent"] == "[laughs] نص أداء"
+    assert job.parameters["model_id"] == "eleven_v3"
+
+
 def test_run_batch_real_tortor_scene7_line_id_resolves_to_v3_laugh_cue(
     session: Session, app_config: AppConfig
 ) -> None:
