@@ -77,3 +77,12 @@ class AssetImportError(ServiceError):
     ``AssetImportService.import_asset``. Carries the original exception
     via ``__cause__`` (standard ``raise ... from err`` chaining).
     """
+
+
+class AudioRenderError(ServiceError):
+    """An audio render (e.g. an episode dialogue preview) could not be produced.
+
+    Covers both refusing to render (the source report was not
+    assembly-ready) and a real ``ffmpeg``/``ffprobe`` failure -- see
+    :class:`~app.core.services.episode_audio_preview_service.EpisodeAudioPreviewService`.
+    """

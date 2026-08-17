@@ -33,6 +33,7 @@ from app.core.db.seed import seed_demo_data
 from app.core.models import Asset
 from app.core.services.approval_service import ApprovalService
 from app.core.services.asset_import_service import AssetImportService, ImportRequest
+from app.core.services.episode_audio_preview_service import EpisodeAudioPreviewService
 from app.core.services.episode_service import EpisodeService
 from app.core.services.exceptions import ServiceError
 from app.core.services.export_package_service import ExportPackageService
@@ -220,6 +221,29 @@ def cmd_export_episode(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_render_audio_preview(args: argparse.Namespace) -> int:
+    with _session_factory()() as session:
+        episode = _resolve_episode(session, args.slug)
+        result = EpisodeAudioPreviewService().render_preview(
+            session, episode.id, Path(args.output)
+        )
+        print(f"Preview rendered: {result.output_path}")
+        print(
+            f"clips={result.clip_count}  same_scene_gaps={result.same_scene_gap_count}  "
+            f"scene_boundary_gaps={result.scene_boundary_gap_count}"
+        )
+        print(
+            f"codec={result.codec_name}  sample_rate={result.sample_rate}  "
+            f"channels={result.channels}  bit_rate={result.bit_rate}"
+        )
+        print(
+            f"expected={result.expected_duration_seconds:.3f}s  "
+            f"measured={result.measured_duration_seconds:.3f}s  "
+            f"delta={result.duration_delta_seconds:+.3f}s"
+        )
+    return 0
+
+
 def cmd_create_default_tasks(args: argparse.Namespace) -> int:
     with session_scope(_session_factory()) as session:
         episode = _resolve_episode(session, args.slug)
@@ -354,6 +378,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Build a draft preview export even if the readiness checklist has blocking issues.",
     )
     p.set_defaults(func=cmd_export_episode)
+
+    p = subparsers.add_parser(
+        "render-audio-preview",
+        help="Render a dialogue-only audio preview MP3 for an episode's approved final voice takes.",
+    )
+    p.add_argument("slug", help="Episode slug or UUID.")
+    p.add_argument("--output", required=True, help="Output MP3 path.")
+    p.set_defaults(func=cmd_render_audio_preview)
 
     p = subparsers.add_parser(
         "create-default-tasks", help="Create the standard production checklist for an episode."
