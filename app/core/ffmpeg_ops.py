@@ -38,7 +38,13 @@ class AudioStreamProbe:
 def _run(cmd: list[str], *, timeout: float | None = None) -> subprocess.CompletedProcess[str]:
     try:
         completed = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
         )
     except FileNotFoundError as err:
         raise FfmpegError(f"{cmd[0]!r} not found (is it on PATH?): {err}") from err

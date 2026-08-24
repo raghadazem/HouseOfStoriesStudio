@@ -87,6 +87,63 @@ def test_probe_audio_raises_when_no_audio_stream(monkeypatch: pytest.MonkeyPatch
         ffmpeg_ops.probe_audio(Path("clip.mp3"))
 
 
+def test_probe_audio_handles_non_ascii_arabic_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A file with Arabic ID3 tags (title/artist/lyrics) must probe
+    cleanly -- this is exactly the shape of ffprobe's real JSON output
+    for the approved Episode 001 song file, which triggered a
+    UnicodeDecodeError under Windows' cp1255 default subprocess
+    decoding before the explicit encoding="utf-8" fix."""
+    data = {
+        "streams": [
+            {
+                "codec_type": "audio", "codec_name": "mp3", "sample_rate": "48000",
+                "channels": 2, "channel_layout": "stereo",
+            }
+        ],
+        "format": {
+            "duration": "98.679979",
+            "bit_rate": "192367",
+            "tags": {
+                "title": "مَعًا نَسْتَطِيعْ",
+                "artist": "ragadazeem",
+                "comment": "made with suno",
+                "lyrics-eng": "[Verse 1 — ميليسا وَبَيْلَسان]\nمَعًا مَعًا، خُطْوَةً خُطْوَة",
+            },
+        },
+    }
+
+    def fake_run(cmd, **kwargs):
+        return _completed(stdout=json.dumps(data, ensure_ascii=False))
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    probe = ffmpeg_ops.probe_audio(Path("مَعًا نَسْتَطِيعْ.mp3"))
+
+    assert probe.codec_name == "mp3"
+    assert probe.duration_seconds == pytest.approx(98.679979)
+    assert probe.sample_rate == 48000
+    assert probe.channels == 2
+
+
+def test_run_passes_explicit_utf8_encoding_to_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression guard for the exact cp1255 crash: subprocess.run must
+    always be called with an explicit encoding, never left to the OS
+    locale's default codepage."""
+    captured_kwargs: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured_kwargs.update(kwargs)
+        return _completed(stdout=_probe_json())
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    ffmpeg_ops.probe_audio(Path("clip.mp3"))
+
+    assert captured_kwargs["encoding"] == "utf-8"
+    assert captured_kwargs["errors"] == "replace"
+    assert captured_kwargs["text"] is True
+
+
 # --- run_ffmpeg --------------------------------------------------------------
 
 
